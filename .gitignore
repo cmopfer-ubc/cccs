@@ -1,0 +1,4 @@
+__pycache__/
+
+# For when "pip install -e" is used
+cccs.egg-info/
