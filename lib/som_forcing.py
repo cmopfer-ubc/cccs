@@ -7,6 +7,7 @@ Checks that a SOM forcing file has net zero heat flux convergence and, if not, c
 import shutil
 import numpy as np
 import netCDF4 as nc
+from .utils import log
 
 def som_meanHeatFlux(path:str) -> float:
     """
@@ -67,15 +68,15 @@ def som_forcingChecker(inPath:str, outPath:str|None = None, q_tol:float = 1e-5):
     :type q_tol: float
     """
     q_bar = som_meanHeatFlux(inPath)
-    print(f'Mean heat flux convergence is {q_bar} W/m^2')
+    log(f'Mean heat flux convergence is {q_bar} W/m^2')
 
     if np.abs(q_bar) > q_tol:
-        print(f'Mean is greater than the tolerance, {q_tol}W/m^2. Correcting data...')
+        log(f'Mean is greater than the tolerance, {q_tol}W/m^2. Correcting data...')
         outPath = som_correctHeatFlux(inPath, q_bar, outPath)
-        print(f'All done. Corrected file is located at: {outPath}')
-        print(f'Output has mean heat flux {som_meanHeatFlux(outPath)} W/m^2')
+        log(f'All done. Corrected file is located at: {outPath}')
+        log(f'Output has mean heat flux {som_meanHeatFlux(outPath)} W/m^2')
     else:
-        print(f'Mean is less than tolerance, {q_tol} W/m^2, so no corrections are needed. Exiting...')
+        log(f'Mean is less than tolerance, {q_tol} W/m^2, so no corrections are needed. Exiting...')
 
 if __name__=="__main__":
     file = '/project/def-mlague/shared_sourcecode/cesm_source/cesm2_inputs/ocn/docn7/SOM/pop_frc.b.e21.BW1850.f09_g17.CMIP6-piControl.001.190514.nc'

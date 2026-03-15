@@ -11,6 +11,7 @@ import subprocess
 import numpy as np
 import netCDF4 as nc
 import scipy
+from .utils import log
 
 # See PFTs at https://escomp.github.io/CTSM/tech_note/Ecosystem/CLM50_Tech_Note_Ecosystem.html#id15
 # Forest, shrub, and grass PFT ids
@@ -38,10 +39,10 @@ def fsurdat_checkValid(path:str, tol:float = 1e-5):
     PCT_NAT_PFT_tot = np.sum(PCT_NAT_PFT, axis=0)
     PCT_NAT_PFT_maxErr = np.nanmax(np.abs(PCT_NAT_PFT_tot - 100))
     if PCT_NAT_PFT_maxErr < tol:
-        print(f'File {path} has valid PCT_NAT_PFT')
+        log(f'File {path} has valid PCT_NAT_PFT')
         return True
     else:
-        print(f'File {path} has invalid PCT_NAT_PFT, with one point having total PCT_NAT_PFT off by {PCT_NAT_PFT_maxErr} from 100.')
+        log(f'File {path} has invalid PCT_NAT_PFT, with one point having total PCT_NAT_PFT off by {PCT_NAT_PFT_maxErr} from 100.')
         return False
 
 def confirmSuccess(inPath:str, outPath:str, diffPath:str|None = None):
@@ -75,7 +76,7 @@ def confirmSuccess(inPath:str, outPath:str, diffPath:str|None = None):
 
     diffData = nc.Dataset(diffPath, 'r')
     PCT_NAT_PFT = diffData.variables['PCT_NAT_PFT'][:]
-    print(f'Number of elements modified: {np.sum(PCT_NAT_PFT != 0)}')
+    log(f'Number of elements modified: {np.sum(PCT_NAT_PFT != 0)}')
 
 def modify_PCT_NAT_PFT(inPath:str, outPath:str, modificationDict:dict|None = None):
     """
@@ -100,7 +101,7 @@ def modify_PCT_NAT_PFT(inPath:str, outPath:str, modificationDict:dict|None = Non
             modification = np.zeros((PCT_NAT_PFT.shape[1], PCT_NAT_PFT.shape[2]))
 
             for source in sources:
-                print(f'Changing PFT from {source} to {target}')
+                log(f'Changing PFT from {source} to {target}')
                 source_PCT_NAT_PFT = PCT_NAT_PFT[source]
                 modification += source_PCT_NAT_PFT
                 PCT_NAT_PFT[source][:] = 0
@@ -108,7 +109,7 @@ def modify_PCT_NAT_PFT(inPath:str, outPath:str, modificationDict:dict|None = Non
             PCT_NAT_PFT[target] += modification
         data.variables['PCT_NAT_PFT'][:] = PCT_NAT_PFT
 
-    print('Checking output file is valid to use as fsurdat, and is different from the input')
+    log('Checking output file is valid to use as fsurdat, and is different from the input')
     fsurdat_checkValid(inPath, outPath)
     confirmSuccess(inPath, outPath)
 
@@ -135,7 +136,7 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:np.ndarray|None = Non
         PCT_NAT_PFT = data.variables['PCT_NAT_PFT'][:]
 
         if grassFracs is None:
-            print('Getting ratios between grass PFTs')
+            log('Getting ratios between grass PFTs')
             grasses = np.zeros((len(grassIds), PCT_NAT_PFT.shape[1], PCT_NAT_PFT.shape[2]))
             for i, grassId in enumerate(grassIds):
                 grasses[i] = PCT_NAT_PFT[grassId][:]
@@ -161,20 +162,20 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:np.ndarray|None = Non
             indeces_nans = indices[grassless.flatten()]
             grassFracs[:, grassless] = interpolator(indeces_nans).T
 
-        print('Finding total percent forest PFT by location')
+        log('Finding total percent forest PFT by location')
         forestTot = np.zeros((PCT_NAT_PFT.shape[1], PCT_NAT_PFT.shape[2]))
         for woodedId in forestIds + shrubIds: # If wanting to change only forest or only shrub, this would be the line to change
             forestTot += PCT_NAT_PFT[woodedId][:]
             PCT_NAT_PFT[woodedId][:] = 0
 
-        print('Applying new grass percentages')
+        log('Applying new grass percentages')
         for j, grassId in enumerate(grassIds):
             grassModifier = forestTot * grassFracs[j]
             PCT_NAT_PFT[grassId][:] += grassModifier
 
         data.variables['PCT_NAT_PFT'][:] = PCT_NAT_PFT
 
-    print('Checking output file is valid to use as fsurdat, and is different from the input')
+    log('Checking output file is valid to use as fsurdat, and is different from the input')
     fsurdat_checkValid(inPath, outPath)
     confirmSuccess(inPath, outPath)
 
