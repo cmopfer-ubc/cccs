@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+
+from datetime import datetime
+from datetime import timezone
+from pathlib import Path
+import subprocess
+import re
+
+pyproject = Path('pyproject.toml')
+if not pyproject.exists():
+    exit(0)
+
+version = datetime.now(timezone.utc)
+version = version.strftime("%Y.%m.%d") # No f-strings to be safe in case of old Python
+
+text = pyproject.read_text(encoding='UTF-8')
+
+# Find existing text matching 'version = "<version>"', replace it with new version
+text_updated = re.sub(
+    r'(?m)^version\s*=\s*".*?"',
+    f'version = "{version}"',
+    text
+)
+
+if text_updated != text:
+    pyproject.write_text(text_updated, encoding='UTF-8')
+    subprocess.run(['git', 'add', 'pyproject.toml'], check=False)
+
+exit(0)
