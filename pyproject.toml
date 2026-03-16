@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cccs"
-version = "2026.03.15"
+version = "2026.03.16"
 dependencies = [
   "numpy",
   "pyproj",
@@ -22,8 +22,8 @@ dynamic = ["readme"]
 [project.urls]
 Repository = "https://github.com/cmopfer-ubc/cccs"
 
-[tool.setuptools.packages.find]
-where = ["lib"]
+[tool.setuptools.package-dir]
+cccs = "lib"
 
 [tool.setuptools.dynamic]
 readme = {file = "README.md", content-type = "text/markdown"}
