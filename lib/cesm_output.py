@@ -7,7 +7,7 @@ import os
 import numpy as np
 import netCDF4 as nc
 
-def cam_annual_mean(camRoot:str, variable:str = 'lev', year:str = '0001') -> np.ndarray:
+def cam_annual_mean(camRoot:str, variable:str = 'lev', year:str = '0001', subset:slice|None = None) -> np.ndarray:
     """
     Retrieves the average value of a variable across one year of CAM output from the h0 (monthly mean) files. Can be fooled if there are weird files in your output directory, as this function searches through all available files for those containing "h0.YYYY".
 
@@ -19,6 +19,9 @@ def cam_annual_mean(camRoot:str, variable:str = 'lev', year:str = '0001') -> np.
     :type cariable: str, optional
     :param year: The year of output data to consider. Default is the first year, "0001". Must match the "YYYY" format since that's what's used in CAM's file naming conventions.
     :type year: str, optional
+    :param subset: The subset of data to take the mean of. A likely use case would be getting temperature at a certain level/height. Default is to take the entire dataset.
+    :type subset: slice or None, optional
+
     :return: The mean value of the chosen variable. Matches the type of the variable within the netCDF file, but that's usually a numpy array or masked array.
     :rtype: np.ndarray
     """
@@ -27,16 +30,19 @@ def cam_annual_mean(camRoot:str, variable:str = 'lev', year:str = '0001') -> np.
 
     for file in allFiles:
         if f'h0.{year}' in file:
-            endFileName = file.split(f'h0.{year}')[1]
+            endFileName = file.split(f'h0.{year}')[-1]
             month = int(endFileName[1:3]) - 1
             usedFiles[month] = os.path.join(camRoot, file)
 
     for usedFile in usedFiles:
         with nc.Dataset(usedFile, 'r') as monthData:
             monthVar = monthData.variables[variable][:]
+            if subset is not None:
+                monthVar = monthVar[subset]
+
             try:
                 meanVar += monthVar
-            except NameError:
+            except NameError: # Need to initialize meanVar
                 meanVar = monthVar[:]
 
     meanVar /= 12

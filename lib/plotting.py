@@ -13,7 +13,7 @@ import matplotlib.colors as colors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
-def globalMap(data, long, lat, savePath, title, units, cbarType='linear', cmap=None, vlims=None, contourIntervals=100, percentExcluded=0):
+def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, title:str, units:str, cbarType:str = 'linear', cmap:str|None = None, vlims:list|None = None, contourIntervals:int = 100, percentExcluded:int|float = 0):
     """
     A very flexible function to plot colormaps over a global map with an outline of the continents.
 
@@ -38,7 +38,7 @@ def globalMap(data, long, lat, savePath, title, units, cbarType='linear', cmap=N
     :param contourIntervals: Number of increments at which to evaluate the colormap. A greater value leads to smoother, more pleasing visuals. Default is 100.
     :type contourIntervals: int, optional
     :param percentExcluded: The percentage of data to exclude from both the top and bottom of data's distribution when creating the colorbar. This avoids having a minimum (maximum )value of the colorbar far less (greater) than the majority of the data, washing out the visuals. Default is 0.
-    :type percentExcluded: float or int
+    :type percentExcluded: int or float, optional
 
     :raises ValueError: Raised when cbarType is not a valid option ('linear', 'log', or 'diverging')
     """
@@ -176,7 +176,7 @@ def globalMap(data, long, lat, savePath, title, units, cbarType='linear', cmap=N
     fig.savefig(savePath, bbox_inches='tight', dpi=200)
     plt.close(fig)
 
-def threeVar(data1, data2, data3, long, lat, savePath, title, legend=True, dataLabels = None):
+def threeVar(data1:np.ndarray, data2:np.ndarray, data3:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, title:str, legend:bool = True, dataLabels:list|None = None):
     """
     A function built to map three variables, each as their own colour, with overlapping regions showing a mixture of the relevant colours. As an example of when this could be useful: this was originally developed to plot how much the three grass PFTs were increased in a deforested fsurdat file.
 
@@ -210,7 +210,7 @@ def threeVar(data1, data2, data3, long, lat, savePath, title, legend=True, dataL
             someNegative = True
         else:
             allNegative = False
-    
+
     if someNegative and not allNegative:
         raise ValueError('One or two datasets input to threeVar plotting function are negative. Unclear how to proceed and make logical/useful plot. Check if it makes sense to flip the signs of only some of your data, then do that before feeding it to the plotting function, if you wish to proceed.')
     if allNegative:
