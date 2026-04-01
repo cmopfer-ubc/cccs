@@ -49,6 +49,11 @@ def cam_annual_mean(camRoot:str, variable:str = 'lev', year:str = '0001', subset
 
     return meanVar
 
+def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, returnPath:str|None = None):
+    """
+    Identifies the different types on netCDF files (e.g. <run-name>.cam.h1 or <run-name>.clm2.h0) within the output path, searching through <component>/hist subdirectories if this is the path to an archive directory (rather than a directory that immediately contains the output). If a search term is provided, will return a list of files/variables containing that term (if any exist). If return path is specified, the output of this function is saved to a text file.
+    """
+
 if __name__ == '__main__':
     camDir = '/home/cmopfer/scratch/cesm/output/archive/NdgParams_Ctrl/atm/hist'
     cam_annual_mean(camDir)
