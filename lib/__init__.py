@@ -1,0 +1,3 @@
+"""
+Camden's Computational Climate Scripts (cccs) includes various modules and functions for common tasks in manipulating and plotting data related to climate model research. Code here is general and flexible, avoiding hard-coded paths or behaviours that only make sense in the context of a particular project. Scripts that are specific to a project are, instead, kept in a directory specific to that project.
+"""
