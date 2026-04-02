@@ -1,12 +1,19 @@
 #!/bin/sh
 
-if command -v python3 2>&1; then
-    python3 "$(dirname "$0")/pre-commit.py"
-elif command -v python 2>&1; then
-    python "$(dirname "$0")/pre-commit.py"
-elif command -v py 2>&1; then
-    py "$(dirname "$0")/pre-commit.py"
-else
-    echo "No suitable Python version found on PATH"
-    exit 1
-fi
+SCRIPT="$(dirname "$0")/pre-commit.py"
+for pyCommand in python3 python py; do
+    if command -v "$pyCommand" 2>&1; then
+        # Check if this is a valid Python interpreter
+        "$pyCommand" -c "import sys" 2>&1
+        if [ $? -ne 0 ]; then
+            continue
+        fi
+
+        # If we got here, the interpeter was valid, so run the script and report the exit code it returns
+        "$pyCommand" "$SCRIPT"
+        exit $?
+    fi
+done
+
+echo "No suitable Python interpreter found on PATH"
+exit 1
