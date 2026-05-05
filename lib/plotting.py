@@ -43,7 +43,7 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, ti
     :raises ValueError: Raised when cbarType is not a valid option ('linear', 'log', or 'diverging')
     """
     nonNanData = data[~np.isnan(data)]
-    if np.all(nonNanData == nonNanData[0]):
+    if len(np.unique(nonNanData)) == 1:
         warnings.warn('Input data for globalMap contains one uniform value, so colorbar could not spread colormap across range. Will not create plot.', UserWarning)
         return # Return without plotting because continuing leads to a very cryptic error raised by ax.colorbar's call to pcolormesh
 
