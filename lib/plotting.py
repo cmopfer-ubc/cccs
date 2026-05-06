@@ -10,10 +10,13 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
+from matplotlib import axis
+from matplotlib.layout_engine import ConstrainedLayoutEngine, TightLayoutEngine
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from cartopy.mpl.geoaxes import GeoAxes
 
-def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, title:str, units:str, cbarType:str = 'linear', cmap:str|None = None, vlims:list|None = None, contourIntervals:int = 100, percentExcluded:int|float = 0):
+def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, title:str, units:str, cbarType:str = 'linear', cmap:str|None = None, vlims:list|None = None, contourIntervals:int = 100, percentExcluded:int|float = 0, ax:axis.Axis|GeoAxes|None = None, returnAx:bool = False, savePath:str|None = None):
     """
     A very flexible function to plot colormaps over a global map with an outline of the continents.
 
@@ -23,8 +26,6 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, ti
     :type long: np.ndarray
     :param lat: The array of longitude values to plot over. Must have the same shape as data.
     :type lat: np.ndarray
-    :param savePath: The file to which the resulting figure will be saved.
-    :type savePath: str
     :param title: The title to display on the plot.
     :type title: str
     :param units: The units by which the colorbar will be labelled
@@ -39,35 +40,73 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, ti
     :type contourIntervals: int, optional
     :param percentExcluded: The percentage of data to exclude from both the top and bottom of data's distribution when creating the colorbar. This avoids having a minimum (maximum )value of the colorbar far less (greater) than the majority of the data, washing out the visuals. Default is 0.
     :type percentExcluded: int or float, optional
+    :param ax: An axis or axis-like object to use as a reference for the plot. If this is a GeoAxes object, the plot will be made directly on it. Otherwise, the related figure object and position of ax will be used to create a new GeoAxes object. Default is None, in which case a new figure and axis are created.
+    :type ax: matplotlib.axis.Axis or cartopy.mpl.geoaxes.GeoAxes or None, optional
+    :param returnAx: Determines whether to (when False) save the figure as an image or (when True) return the ax object the map is drawn on. When true, typical usage may look like fig,axs=plt.subplots(2,2); axs[0,0]=globalMap(...,ax=axs[0,0],returnAx=True).
+    :type returnAx: bool, optional
+    :param savePath: The file to which the resulting figure will be saved. Default is the working directory
+    :type savePath: str or None, optional
 
+    :return: Default is to return None. When returnAx is True, returns a cartopy.mpl.geoaxes.GeoAxes object with the map drawn on it.
+    :rtype: None or cartopy.mpl.geoaxes.GeoAxes
     :raises ValueError: Raised when cbarType is not a valid option ('linear', 'log', or 'diverging')
     """
-    nonNanData = data[~np.isnan(data)]
-    if len(np.unique(nonNanData)) == 1:
+    plotData = np.ma.MaskedArray(data, mask=np.isnan(data))
+
+    nonNanData = plotData[~np.isnan(plotData)] # Not taken from something like plotData[plotData.mask since there might be no mask
+    if np.all(nonNanData == nonNanData[0]):
         warnings.warn('Input data for globalMap contains one uniform value, so colorbar could not spread colormap across range. Will not create plot.', UserWarning)
         return # Return without plotting because continuing leads to a very cryptic error raised by ax.colorbar's call to pcolormesh
 
-    # ccrsProj = ccrs.RotatedPole(140, 70) # Format is (lon, lat). Useful for regional plots, where the projection can be centred over the data. This value corresponds with Greenland as an example
-    ccrsProj = ccrs.PlateCarree()
-    fig, ax = plt.subplots(1, 1, subplot_kw={'projection':ccrsProj})
+    if ax is None:
+        # ccrsProj = ccrs.RotatedPole(140, 70) # Format is (lon, lat). Useful for regional plots, where the projection can be centred over the data. This value corresponds with Greenland as an example
+        ccrsProj = ccrs.PlateCarree()
+        fig, plotAx = plt.subplots(1, 1, subplot_kw={'projection':ccrsProj})
+    elif isinstance(ax, GeoAxes):
+        plotAx = ax
+        fig = ax.figure
+    else:
+        fig = ax.figure
+
+        # NOTE The following block may not be necessary? The layoutengine is preserved?
+        # Take note of what layout to use when adding the GeoAxes.
+        layout = None
+        layoutEngine = fig.get_layout_engine()
+        if isinstance(layoutEngine, ConstrainedLayoutEngine):
+            layout = 'constrained'
+        if isinstance(layoutEngine, TightLayoutEngine):
+            layout = 'tight'
+
+        pos = ax.get_position() # Position the old axis had, so that the new one will replace it
+        fig.delaxes(ax)
+
+        ccrsProj = ccrs.PlateCarree()
+        plotAx = fig.add_axes(pos, projection=ccrsProj)
+
+        # NOTE Again, from above, it seems that layout engine is preserved?
+        # Re-apply layout stored earlier
+        if layout == 'constrained':
+            fig.set_constrained_layout(True)
+        elif layout == 'tight':
+            fig.tight_layout()
 
     if cbarType == 'linear':
         if cmap is None:
-            if np.sum(data > 0) > 0.05 * data.size: # Vast majority of data is positive
+            if np.sum(plotData > 0) > 0.05 * plotData.size: # Vast majority of data is positive
                 cmap = 'viridis'
             else:
                 cmap = 'viridis_r'
         cmap = plt.get_cmap(cmap)
 
         if vlims is None:
-            vlims = np.nanpercentile(data, [percentExcluded, 100-percentExcluded])
+            vlims = np.nanpercentile(plotData, [percentExcluded, 100-percentExcluded])
 
             # contourLevels = np.nanpercentile(data, np.linspace(percentExcluded, 100-percentExcluded, contourIntervals)) # This "cheats" by stretching/compressing the colorbar to match where there are more/less points
         contourLevels = np.linspace(vlims[0], vlims[1], contourIntervals)
 
         # Define distribution of colors in cmap across data range
-        bottomExtend = contourLevels[0] * ((1-1e-5)) > np.nanmin(data) # True when data is smaller than vmin by more than 0.001%
-        topExtend = contourLevels[-1] * (1+1e-5) < np.nanmax(data) # True when data is greater than vmax by more than 0.001%
+        bottomExtend = contourLevels[0] * ((1-1e-5)) > np.nanmin(plotData) # True when data is smaller than vmin by more than 0.001%
+        topExtend = contourLevels[-1] * (1+1e-5) < np.nanmax(plotData) # True when data is greater than vmax by more than 0.001%
 
         if bottomExtend and topExtend:
             norm = colors.BoundaryNorm(contourLevels, cmap.N, extend='both')
@@ -101,7 +140,7 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, ti
             cmap = 'inferno'
 
         if vlims is None:
-            vlims = tuple(i for i in np.nanpercentile(data, [percentExcluded, 100-percentExcluded]))
+            vlims = tuple(i for i in np.nanpercentile(plotData, [percentExcluded, 100-percentExcluded]))
         contourLevels = np.logspace(np.log10(vlims[0]), np.log10(vlims[1]), contourIntervals, base=10)
 
         norm = colors.LogNorm(vlims[0], vlims[1])
@@ -124,7 +163,7 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, ti
         if cmap is None:
             cmap = 'seismic'
 
-        halfRange = np.nanmax(np.abs(np.nanpercentile(data, [percentExcluded, 100-percentExcluded])))
+        halfRange = np.nanmax(np.abs(np.nanpercentile(plotData, [percentExcluded, 100-percentExcluded])))
         norm = colors.CenteredNorm(halfrange=halfRange)
 
         ticks = np.linspace(-halfRange, halfRange,8)
@@ -148,29 +187,35 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, ti
     else:
         raise ValueError(f"Invalid cbarType option {cbarType} in greenlandPlotter. Must be one of 'linear', 'log', or 'diverging'")
 
-    contour = ax.pcolormesh(long, lat, data, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm)
+    contour = plotAx.pcolormesh(long, lat, plotData, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm)
 
     # Create and nice-ify colorbar
-    colorbar = fig.colorbar(contour, ax=ax, norm=norm, spacing='proportional', pad=0.1)
+    colorbar = fig.colorbar(contour, norm=norm, spacing='proportional', pad=0.1)
     colorbar.set_ticks(ticks, labels=tickLabels)
     colorbar.minorticks_off()
     colorbar.set_label(units)
 
-    ax.set_title(title)
+    plotAx.set_title(title)
 
     # # Center on region
     # bounds = [-63, -23, 59, 84] # Format is [lon_min, lon_max, lat_min, lat_max]. These correspond to Greenland, as an example
     # ax.set_extent(bounds, crs=ccrs.PlateCarree())
     # ax.set_aspect(1.8) # Useful to match the aspect of the bounds. Again, this corresponds to Greenland
 
-    ax.gridlines(draw_labels=True, dms=True, x_inline=False, y_inline=False)
+    plotAx.gridlines(draw_labels=True, dms=True, x_inline=False, y_inline=False)
 
     # Outline coasts, fill in continents
-    ax.coastlines(resolution='110m') # Options are 110, 50, or 10m. For a global map, higher resolution is less useful
-    ax.add_feature(cfeature.LAND, edgecolor='none', facecolor='dimgray')
+    plotAx.coastlines(resolution='110m') # Options are 110, 50, or 10m. For a global map, higher resolution is less useful
+    plotAx.add_feature(cfeature.LAND, edgecolor='none', facecolor='dimgray')
+
+    if returnAx:
+        # This means the code below will not run, so the fig will stay open. This is necessary for the user to do anything helpful with the axis outside this function
+        return plotAx
 
     # Save and clear figure
-    if os.path.splitext(savePath)[1] == '': # No file extension. May be tricked by a file name containing '.'
+    if savePath is None:
+        savePath = '.'
+    if os.path.splitext(savePath)[-1] == '': # No file extension. May be tricked by a file name containing '.'
         savePath += '.png'
     os.makedirs(os.path.dirname(savePath), exist_ok=True)
     fig.savefig(savePath, bbox_inches='tight', dpi=200)

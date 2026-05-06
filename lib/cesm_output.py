@@ -32,7 +32,7 @@ def cam_annual_mean(camRoot:str, variable:str = 'lev', years:list[str]|None = No
     """
     def getGridArea(camRoot):
         try:
-            # Tries for lnd output is in same directory, typical of output/$CASE/run/ directories
+            # Checks for lnd output in same directory, typical of output/$CASE/run/ directories
             run = glob.glob('*.clm2.h0.*.nc', root_dir=camRoot)
             if run:
                 clmRunFile = os.path.join(camRoot, run[0])
@@ -41,7 +41,7 @@ def cam_annual_mean(camRoot:str, variable:str = 'lev', years:list[str]|None = No
                 log(f'Retrieved grid cell area form land data in {clmRunFile}', 'debug')
                 return area
 
-            # Tries for lnd output is in a relative path typical of an archive directory, like output/archive/$CASE/atm/hist/
+            # Checks for lnd output in a relative path typical of an archive directory, like output/archive/$CASE/atm/hist/ (adds on ../../lnd/hist/)
             clmArchiveRoot = os.path.join(camRoot, '..', '..', 'lnd', 'hist')
             archive = glob.glob('*.clm2.h0.*.nc', root_dir=clmArchiveRoot)
             if archive:
@@ -74,12 +74,6 @@ def cam_annual_mean(camRoot:str, variable:str = 'lev', years:list[str]|None = No
             if subset is not None:
                 monthVar = monthVar[subset]
 
-            if landWeight:
-                monthVar
-            # For land masking:
-            # CAM h0 files have variable LANDFRAC, which is fraction of cell covered by land. 0=ocea, 1=land
-            # CLM h0 files have varibale area, whcih is in km^2. Really would like the volume of cam grid cells, but this is a decent proxy. Also avoids putting big weight on what happens in stratosphere, which nobody cares about
-
             try:
                 meanVar += monthVar
             except NameError: # Need to initialize meanVar
@@ -90,13 +84,13 @@ def cam_annual_mean(camRoot:str, variable:str = 'lev', years:list[str]|None = No
         area = area[subset] # If this line raises an index error because of different shapes, make sure the land file used corresponds with the atmosphere output
     except FileNotFoundError as e:
         log(e, 'warning')
-        log('Since no area data found, will')
+        log('Since no area data found, will not apply an area weighting', 'warning')
         area = 1 # Will do nothing when array is multiplied/divided
 
     meanVar *= area/np.sum(area)
 
     if landWeight:
-        with nc.Dataset(monthPath, 'r') as camDummy:
+        with nc.Dataset(paths[0], 'r') as camDummy:
             landFrac = camDummy.variables['LANDFRAC'][:]
         meanVar *= landFrac
 
@@ -130,7 +124,7 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
                 returnDir = os.path.dirname(returnFile)
                 if returnDir: # Meaning return dir is not ''
                     os.makedirs(returnDir, exist_ok=True)
-                
+
                 with open(returnFile, 'a', encoding='UTF-8') as f:
                     f.write('\n' + output)
             except Exception as e:
@@ -146,7 +140,7 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
     if archive:
         allFiles = glob.glob(os.path.join(outputPath, '*', 'hist', f'{fileSpec}.nc'), recursive=True) # Assumes outputPath/<component>/hist/<fname>.nc structure
     else:
-        allFiles = glob.glob(f'{fileSpec}.nc', root_dir=outputPath) # Assumes outputPath/<fname>.nc structure
+        allFiles = glob.glob(os.path.join(outputPath, f'{fileSpec}.nc')) # Assumes outputPath/<fname>.nc structure
 
     allFiles.sort()
 
