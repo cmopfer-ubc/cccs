@@ -10,16 +10,20 @@ import numpy as np
 import netCDF4 as nc
 from .utils import log
 
-def cam_annual_mean(camRoot:str, variable:str = 'lev', years:list[str]|None = None, subset:slice|None = None, landWeight:bool = False) -> np.ndarray:
+def annual_mean(outputRoot:str, archive:bool = True, component:str = 'cam', variable:str = 'lev', years:list[str]|None = None, subset:slice|None = None, landWeight:bool = False) -> np.ndarray:
     """
-    Retrieves the average value of a variable across one year of CAM output from the h0 (monthly mean) files. Can be fooled if there are weird files in your output directory, as this function searches through all available files for those containing "h0.YYYY". The mean will always be weighted by grid cell size, and can optionally be weighted by how much land is in the grid cell (essentially masking the mean to land).
+    Retrieves the average value of a variable across one year of CESM output from the monthly mean files of a specified model component. Can be fooled if there are weird files in your output directory, as this function searches through all available files for those containing "<component>.YYYY". The mean will always be weighted by grid cell size, and can optionally be weighted by how much land is in the grid cell (essentially masking the mean to land).
 
-    Note that the output array will match the shape of those contained in the CAM h0 file. These, in turn, often have a time dimension, but with shape 1 along that dimension. This may lead to some confusion/awkwardness when handling the output from here where arr[0] looks very similar to arr, but has flattened the time dimension away. This can be resolved by passing subset=(0,).
+    Note that the output array will match the shape of those contained in the files being read in. These, in turn, often have a time dimension, but with shape 1 along that dimension. This may lead to some confusion/awkwardness when handling the output from here where arr[0] looks very similar to arr, but has flattened the time dimension away. This can be resolved by passing subset=(0,) into this function.
 
-    :param camRoot: A directory with a year's worth of CAM output. Often of the form "/scratch/$USER/cesm/output/archive/$CASE/atm/hist".
-    :type camRoot: str
-    :param variable: The variable contained within the netCDF file which you would like to average over. Default is elevation, since that was the first use case. ncdump an h0 file if you're looking for other options.
-    :type cariable: str, optional
+    :param outputRoot: A directory with a year's worth of CESM output. Often of the form "/scratch/$USER/cesm/output/archive/$CASE" or, occasionally, "/scratch/$USER/cesm/output/$CASE/run".
+    :type outputRoot: str
+    :param archive: Whether or not outputRoot leads to an archive directory, which things like lnd/hist subdirectories contain the actual data. If True, assumes that directory structure, and looks for output files accordingly. If False, assumes all data is in outputRoot, and does not do any recursive searching.
+    :type archive: bool, optional
+    :param component: A string representing the model component to retrieve data from. Commonly will be 'cam', 'clm2', or maybe 'mosart' or 'pop'. By default, will average over <compoenent>.h0 files but, if something like cam.h1 was produced monthly, you could specify component=cam.h1 to average over that instead. Default is 'cam'.
+    :type component: str, optional
+    :param variable: The variable which you would like to average over. Default is CAM's elevation, since that was the first use case for this function. ncdump an h0 file (or use the cesm_output.query function!) if you're looking for other options.
+    :type variable: str, optional
     :param years: A list years of output data to consider. Default is the first year, "0001", only. List elements match the "YYYY" format since that's what's used in CAM's file naming conventions.
     :type years: list[str], optional
     :param subset: The subset of data to take the mean of. A likely use case would be getting temperature at a certain level/height. Default is to take the entire dataset.
@@ -27,42 +31,36 @@ def cam_annual_mean(camRoot:str, variable:str = 'lev', years:list[str]|None = No
     :param landWeight: A trigger for weighting the mean by the fraction of the grid cell covered by land, as determined by the cam.h0 landfrac variable. Helpful when something only the land model was perturbed. Default is False, meaning the average is unweighted.
     :type landWeight: bool, optional
 
-    :return: The mean value of the chosen variable. Matches the type of the variable within the netCDF file, but that's usually a numpy array or masked array.
+    :return: The mean value of the chosen variable. Matches the type of the variable within the netCDF file, which is usually a numpy array or masked array.
     :rtype: np.ndarray
     """
-    def getGridArea(camRoot):
-        try:
-            # Checks for lnd output in same directory, typical of output/$CASE/run/ directories
-            run = glob.glob('*.clm2.h0.*.nc', root_dir=camRoot)
-            if run:
-                clmRunFile = os.path.join(camRoot, run[0])
-                with nc.Dataset(clmRunFile, 'r') as clmDummy:
-                    area = clmDummy.variables['area'][:]
-                log(f'Retrieved grid cell area form land data in {clmRunFile}', 'debug')
-                return area
+    if component[-3:] != '.h0':
+        component += '.h0'
 
-            # Checks for lnd output in a relative path typical of an archive directory, like output/archive/$CASE/atm/hist/ (adds on ../../lnd/hist/)
-            clmArchiveRoot = os.path.join(camRoot, '..', '..', 'lnd', 'hist')
-            archive = glob.glob('*.clm2.h0.*.nc', root_dir=clmArchiveRoot)
-            if archive:
-                clmArchiveFile = os.path.join(clmArchiveRoot, archive[0])
-                with nc.Dataset(clmArchiveFile, 'r') as clmDummy:
-                    area = clmDummy.variables['area'][:]
-                log(f'Retrieved grid cell area form land data in {clmArchiveFile}', 'debug')
-                return area
-        except Exception as _:
-            pass
-        raise FileNotFoundError(f'Unable to locate land output for grid area in directories {camRoot} or {os.path.join(camRoot, '..', '..', 'lnd', 'hist')}')
+    if archive:
+        componentToDir = {'cam.h0': 'atm', 'clm2.h0': 'lnd', 'mosart.h0': 'rof', 'pop.h0': 'ocn'} # TODO Add more to cover other common components/output files to be using
+        dataRoot = os.path.join(outputRoot, componentToDir[component], 'hist')
+        clmRoot = os.path.join(outputRoot, 'lnd', 'hist')
+    else:
+        dataRoot, clmRoot = outputRoot, outputRoot # All data is assumed to be in one directory, typical of a run directory like /scratch/$USER/cesm/output/$CASE/run.
+
+    def getGridArea():
+        # Checks for lnd output in same directory, typical of output/$CASE/run/ directories
+        clmFileForLand = glob.glob(os.path.join(clmRoot, '*.clm2.h0.*.nc'))[0]
+        with nc.Dataset(clmFileForLand, 'r') as clmDummy:
+            area = clmDummy.variables['area'][:]
+        log(f'Retrieved grid cell area from land data in {clmFileForLand}', 'debug')
+        return area
 
     if years is None:
         years = ['0001']
 
     paths = [''] * 12 * len(years)
     for yInd, year in enumerate(years):
-        files = glob.glob(f'*cam.h0.{year}*', root_dir=camRoot)
+        files = glob.glob(os.path.join(dataRoot, f'*.{component}.{year}*'))
         for file in files:
             monthInd = int(file[-5:-3]) - 1
-            paths[yInd * 12 + monthInd] = os.path.join(camRoot, file)
+            paths[yInd * 12 + monthInd] = file
 
     for tInd, monthPath in enumerate(paths):
         if not monthPath:
@@ -80,9 +78,9 @@ def cam_annual_mean(camRoot:str, variable:str = 'lev', years:list[str]|None = No
                 meanVar = monthVar[:]
 
     try:
-        area = getGridArea(camRoot)
-        area = area[subset] # If this line raises an index error because of different shapes, make sure the land file used corresponds with the atmosphere output
-    except FileNotFoundError as e:
+        area = getGridArea()
+        area = area[subset] # If this line raises an index error because of different shapes, make sure the land file used corresponds with the output of the component being analyzed
+    except Exception as e:
         log(e, 'warning')
         log('Since no area data found, will not apply an area weighting', 'warning')
         area = 1 # Will do nothing when array is multiplied/divided
@@ -190,5 +188,5 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
             queryOutput(f'\nThe files:\n{reportedFiles}\nContain the variables:\n{varsDict}\n')
 
 if __name__ == '__main__':
-    camDir = '/home/cmopfer/scratch/cesm/output/archive/NdgParams_Ctrl/atm/hist'
-    cam_annual_mean(camDir)
+    testDir = '/home/cmopfer/scratch/cesm/output/archive/NdgParams_Ctrl'
+    annual_mean(testDir)
