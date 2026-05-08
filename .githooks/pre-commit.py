@@ -8,15 +8,15 @@ pyproject = Path('pyproject.toml')
 if not pyproject.exists():
     exit(0)
 
-version = datetime.now(timezone.utc)
-version = version.strftime("%Y.%m.%d") # No f-strings to be safe in case of old Python
+time = datetime.now(timezone.utc)
+version = '{}.{}.{}'.format(time.year, time.month, time.day) # No f-strings to be safe in case of old Python
 
 text = pyproject.read_text(encoding='UTF-8')
 
 # Find existing text matching 'version = "<version>"', replace it with new version
 text_updated = re.sub(
     r'(?m)^version\s*=\s*".*?"',
-    f'version = "{version}"',
+    'version = "{}"'.format(version),
     text
 )
 
