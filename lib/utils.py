@@ -4,13 +4,12 @@ Modified: Camden Opfer, March 2026
 
 A variety of utility functions that are helpful for getting Python to do things, but not necessarily specific to computational climate, or even science in general.
 """
-
+# Imports for typing
 from typing import Sequence
-import logging
-import sys
-import os
+from logging import Logger as _Logger
+from logging import INFO as _INFO
 
-def createLogger(logFile:str|None = None, loggerName:str = __name__, propagatedLoggerNames:Sequence[str]|None = None) -> logging.Logger:
+def createLogger(logFile:str|None = None, loggerName:str = __name__, propagatedLoggerNames:Sequence[str]|None = None) -> _Logger:
     """
     Uses the logging package to create a logger, which also handles warnings and errors. Optionally, write logs to a file, and/or propagate other loggers to this new logger.
 
@@ -23,6 +22,10 @@ def createLogger(logFile:str|None = None, loggerName:str = __name__, propagatedL
     :param propagatedLoggerNames: A sequence of additional loggers to propagate into this new one.
     :type propagatedLoggerNames: Sequence[str] or None, optional
     """
+    import logging
+    import sys
+    import os
+
     # Argument handling
     if propagatedLoggerNames is None:
         propagatedLoggerNames = set()
@@ -94,7 +97,7 @@ def createLogger(logFile:str|None = None, loggerName:str = __name__, propagatedL
 
     return logger
 
-def log(message:str|Exception, logLevel:int|str=logging.INFO, loggerName:str=__name__):
+def log(message:str|Exception, logLevel:int|str=_INFO, loggerName:str=__name__):
     """
     Logs a message, either by printing (if no logger of the provided name exists) or by logging with a specified severity level.
 
@@ -105,6 +108,8 @@ def log(message:str|Exception, logLevel:int|str=logging.INFO, loggerName:str=__n
     :param loggerName: The internal name of the logger to use. Default is __name__, which will be 'cccs.utils'.
     :str loggerName: str, optional
     """
+    import logging
+
     logger = logging.getLogger(loggerName)
 
     if not logger.hasHandlers(): # Logger has not been initialized

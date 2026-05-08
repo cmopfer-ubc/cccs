@@ -3,20 +3,13 @@ Created: Camden Opfer, March 2026
 
 A bunch of plotting functions for input and output files related to CESM
 """
+# Imports for typing
+from numpy import ndarray as _ndarray
+from matplotlib.axis import Axis as _Axis
+from cartopy.mpl.geoaxes import GeoAxes as _GeoAxes
 
-import os
-import warnings
-import math
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as colors
-from matplotlib import axis
-from matplotlib.layout_engine import ConstrainedLayoutEngine, TightLayoutEngine
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
-from cartopy.mpl.geoaxes import GeoAxes
 
-def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, title:str, units:str, cbarType:str = 'linear', cmap:str|None = None, vlims:list|None = None, contourIntervals:int = 100, percentExcluded:int|float = 0, ax:axis.Axis|GeoAxes|None = None, returnAx:bool = False, savePath:str|None = None):
+def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, cbarType:str = 'linear', cmap:str|None = None, vlims:list|None = None, contourIntervals:int = 100, percentExcluded:int|float = 0, ax:_Axis|_GeoAxes|None = None, returnAx:bool = False, savePath:str|None = None):
     """
     A very flexible function to plot colormaps over a global map with an outline of the continents.
 
@@ -51,6 +44,16 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, title:str, units
     :rtype: None or cartopy.mpl.geoaxes.GeoAxes
     :raises ValueError: Raised when cbarType is not a valid option ('linear', 'log', or 'diverging')
     """
+    import os
+    import warnings
+    from math import ceil
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as colors
+    from matplotlib.layout_engine import ConstrainedLayoutEngine, TightLayoutEngine
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+
     plotData = np.ma.MaskedArray(data, mask=np.isnan(data))
 
     nonNanData = plotData[~np.isnan(plotData)] # Not taken from something like plotData[plotData.mask since there might be no mask
@@ -62,7 +65,7 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, title:str, units
         # ccrsProj = ccrs.RotatedPole(140, 70) # Format is (lon, lat). Useful for regional plots, where the projection can be centred over the data. This value corresponds with Greenland as an example
         ccrsProj = ccrs.PlateCarree()
         fig, plotAx = plt.subplots(1, 1, subplot_kw={'projection':ccrsProj})
-    elif isinstance(ax, GeoAxes):
+    elif isinstance(ax, _GeoAxes):
         plotAx = ax
         fig = ax.figure
     else:
@@ -146,7 +149,7 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, title:str, units
         norm = colors.LogNorm(vlims[0], vlims[1])
 
         # Define location of ticks for colorbar
-        powers = list(range(math.ceil(np.log10(contourLevels[0])), math.ceil(np.log10(contourLevels[-1]))))
+        powers = list(range(ceil(np.log10(contourLevels[0])), ceil(np.log10(contourLevels[-1]))))
         if len(powers) >= 2:
             ticks = [10**power for power in powers]
             tickLabels = [f'$10^{{{power}}}$' for power in powers]
@@ -221,7 +224,7 @@ def globalMap(data:np.ndarray, long:np.ndarray, lat:np.ndarray, title:str, units
     fig.savefig(savePath, bbox_inches='tight', dpi=200)
     plt.close(fig)
 
-def threeVar(data1:np.ndarray, data2:np.ndarray, data3:np.ndarray, long:np.ndarray, lat:np.ndarray, savePath:str, title:str, legend:bool = True, dataLabels:list|None = None):
+def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:_ndarray, savePath:str, title:str, legend:bool = True, dataLabels:list|None = None):
     """
     A function built to map three variables, each as their own colour, with overlapping regions showing a mixture of the relevant colours. As an example of when this could be useful: this was originally developed to plot how much the three grass PFTs were increased in a deforested fsurdat file.
 
@@ -244,6 +247,12 @@ def threeVar(data1:np.ndarray, data2:np.ndarray, data3:np.ndarray, long:np.ndarr
     :param dataLabels: The list of labels to use, with three elements corresponding to data1, data2, and data3 respectively. Default is ['C3 Arctic', 'C3', 'C4'], used when plotting the three grass PFTs of CESM. Has no effect when legend = False.
     :type dataLabels: list or None, optional
     """
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+
     if dataLabels is None:
         dataLabels = ['C3 Arctic', 'C3', 'C4']
 

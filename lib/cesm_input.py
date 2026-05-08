@@ -1,28 +1,19 @@
 """
 Created: Camden Opfer, November 2025
-Last Modified: Camden Opfer, March 2026
+Last Modified: Camden Opfer, May 2026
 
-Intended to be run on a copy of the fsurdat file, modifying it so that all of one PFT is transferred to another for any set of PFTs.
+Modifies various input files to CESM.
 """
+# Imports for typing
+from numpy import ndarray as _ndarray
 
-import os
-import shutil
-import subprocess
-import numpy as np
-import netCDF4 as nc
-import scipy
-from .utils import log
+### FSURDAT ###
 
-# See PFTs at https://escomp.github.io/CTSM/tech_note/Ecosystem/CLM50_Tech_Note_Ecosystem.html#id15
+# See all PFTs at https://escomp.github.io/CTSM/tech_note/Ecosystem/CLM50_Tech_Note_Ecosystem.html#id15
 # Forest, shrub, and grass PFT ids
-forestIds = list(range(1,9))
-shrubIds = list(range(9,12))
-grassIds = list(range(12,15))
-
-# Dicts with keys=target PFTs, args=list of source PFTs
-forestToBare = {0:list(range(1,9))}
-forestToShrub = {9:[1,4,5], 10:[6,7], 11:[2,3,8]}
-vegToBare = {0:list(range(1,15))}
+_forestIds = list(range(1,9))
+_shrubIds = list(range(9,12))
+_grassIds = list(range(12,15))
 
 def fsurdat_checkValid(path:str, tol:float = 1e-5):
     """
@@ -33,6 +24,10 @@ def fsurdat_checkValid(path:str, tol:float = 1e-5):
     :return: A boolean which is True when the file is found to be valid.
     :rtype: bool
     """
+    import numpy as np
+    import netCDF4 as nc
+    from .utils import log
+
     with nc.Dataset(path, 'r') as data:
         PCT_NAT_PFT = data.variables['PCT_NAT_PFT'][:]
 
@@ -56,6 +51,12 @@ def confirmSuccess(inPath:str, outPath:str, diffPath:str|None = None):
     :param diffPath: The file to which the difference between the input and output data will be written. Default is to construct a filename from outPath, avoiding overwriting existing files.
     :type diffPath: str or None, optional
     """
+    import os
+    import subprocess
+    import numpy as np
+    import netCDF4 as nc
+    from .utils import log
+
     if diffPath is None:
         outDir, outName = os.path.split(outPath)
         diffName = outName[:-3] + '_diff'
@@ -89,6 +90,16 @@ def modify_PCT_NAT_PFT(inPath:str, outPath:str, modificationDict:dict|None = Non
     :param changeDict: The dictionary from which to sourge the modification. Keys correspond to the PFT in the output, and the corresponding values are lists of PFTs from which to "take" percentages. Defaults to changing all vegetation to bare soil.
     :type changeDict: dict or None, optional
     """
+    import shutil
+    import numpy as np
+    import netCDF4 as nc
+    from .utils import log
+
+    # Dicts with keys=target PFTs, args=list of source PFTs
+    #forestToBare = {0:list(range(1,9))}
+    #forestToShrub = {9:[1,4,5], 10:[6,7], 11:[2,3,8]}
+    vegToBare = {0:list(range(1,15))}
+
     if modificationDict is None:
         modificationDict = vegToBare
 
@@ -113,7 +124,7 @@ def modify_PCT_NAT_PFT(inPath:str, outPath:str, modificationDict:dict|None = Non
     fsurdat_checkValid(inPath, outPath)
     confirmSuccess(inPath, outPath)
 
-def smartDeforestation(inPath:str, outPath:str, grassFracs:np.ndarray|None = None, latLonRatio:float|int = 3):
+def smartDeforestation(inPath:str, outPath:str, grassFracs:_ndarray|None = None, latLonRatio:float|int = 3):
     """
     Replaces forest and shrubland in each grid cell with grassland. This is proportioned between PFTs 12, 13, and 14 (C3 Arctic, C3, and C4 grass) according to the existing ration between the grass types in that cell. If no grass exists, takes the percentage to use from the nearest cell.
 
@@ -130,6 +141,12 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:np.ndarray|None = Non
     :param latLonRatio: The stretch factor to apply to the nearest neighbour search when calculating grassFracs. Usually >1 to have a zonal bias, since that's how climatologies/biomes tend to sort themselves. Default is 3.
     :type latLonRatio: float or int, optional
     """
+    import shutil
+    import numpy as np
+    import netCDF4 as nc
+    from  scipy.interpolate import NearestNDInterpolator
+    from .utils import log
+
     shutil.copy2(inPath, outPath) # NOTE From some non-rigorous testing, this requires the original file to not be currently open. The use of "with" in meanHeatFlux() and any other Python scripts, and avoiding opening the file in a notebook, should allow this copy function to work as intended.
 
     with nc.Dataset(outPath, 'r+') as data:
@@ -137,8 +154,8 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:np.ndarray|None = Non
 
         if grassFracs is None:
             log('Getting ratios between grass PFTs')
-            grasses = np.zeros((len(grassIds), PCT_NAT_PFT.shape[1], PCT_NAT_PFT.shape[2]))
-            for i, grassId in enumerate(grassIds):
+            grasses = np.zeros((len(_grassIds), PCT_NAT_PFT.shape[1], PCT_NAT_PFT.shape[2]))
+            for i, grassId in enumerate(_grassIds):
                 grasses[i] = PCT_NAT_PFT[grassId][:]
 
             grassTot = np.sum(grasses, axis=0)
@@ -157,19 +174,19 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:np.ndarray|None = Non
             indeces_noNans = indices[~grassless.flatten()]
             grassFracs_noNans = grassFracs[:, ~grassless].T
 
-            interpolator = scipy.interpolate.NearestNDInterpolator(indeces_noNans, grassFracs_noNans)
+            interpolator = NearestNDInterpolator(indeces_noNans, grassFracs_noNans)
 
             indeces_nans = indices[grassless.flatten()]
             grassFracs[:, grassless] = interpolator(indeces_nans).T
 
         log('Finding total percent forest PFT by location')
         forestTot = np.zeros((PCT_NAT_PFT.shape[1], PCT_NAT_PFT.shape[2]))
-        for woodedId in forestIds + shrubIds: # If wanting to change only forest or only shrub, this would be the line to change
+        for woodedId in _forestIds + _shrubIds: # If wanting to change only forest or only shrub, this would be the line to change
             forestTot += PCT_NAT_PFT[woodedId][:]
             PCT_NAT_PFT[woodedId][:] = 0
 
         log('Applying new grass percentages')
-        for j, grassId in enumerate(grassIds):
+        for j, grassId in enumerate(_grassIds):
             grassModifier = forestTot * grassFracs[j]
             PCT_NAT_PFT[grassId][:] += grassModifier
 
@@ -179,11 +196,94 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:np.ndarray|None = Non
     fsurdat_checkValid(inPath, outPath)
     confirmSuccess(inPath, outPath)
 
+### SOM Forcing ###
+
+def som_meanHeatFlux(path:str) -> float:
+    """
+    Finds the weighted mean heat flux convergence of the dataset at path. Although 'area' is provided in radians squared, no conversion to m^2 by Earth's radius is needed since the units cancel out (Wm^-2 * rad^2 / rad^2 = Wm^-2)
+    
+    :param path: Path to input file, from which area and heat flux convergence can be read.
+    :type path: str
+    :returns: The mean heat flux convergence (Wm^-2) from the data read in
+    :rtype: float
+    """
+    import numpy as np
+    import netCDF4 as nc
+
+    with nc.Dataset(path, 'r') as ds:
+        a = np.array(ds.variables['area'][:]) #rad^2 Surface area of each cell
+        q = np.array(ds.variables['qdp'][:]) #Wm^-2 Heat flux convergence (net heat flux) of each cell
+
+        mask = q < 1e30
+
+        q_tot = np.sum(a * q * mask)
+        a_tot = np.sum(a * mask)
+
+        return q_tot/a_tot
+
+def som_correctHeatFlux(inPath:str, q_bar:float, outPath:str|None = None) -> str:
+    """
+    Docstring for correctHeatFlux
+    
+    :param inPath: Path to input file, from which to make a corrected copy.
+    :type inPath: str
+    :param q_bar: The mean heat flux convergence corresponding to this data.
+    :type q_bar: float
+    :param outPath: The file to which a corrected copy will be written. By default, is constructed based on inPath.
+    :type outPath: str or None, optional
+    :returns: The path at which the corrected file is stored. Useful when the default argument (None) is used, and this function constructs the output file name.
+    :rtype: str
+    """
+    import shutil
+    import netCDF4 as nc
+
+    if outPath is None:
+        outPath = inPath[:-2] + 'corrected.nc'
+
+    shutil.copy2(inPath, outPath) # NOTE From some non-rigorous testing, this requires the original file to not be currently open. The use of "with" in meanHeatFlux() and any other Python scripts, and avoiding opening the file in a notebook, should allow this copy function to work as intended.
+
+    with nc.Dataset(outPath, 'r') as ds:
+        if ds.variables is None:
+            raise FileNotFoundError(f'Unable to create copy of netCDF file {inPath}. Confirm that the file is not currently open and retry.')
+
+    with nc.Dataset(outPath, 'r+') as ds:
+        ds.variables['qdp'][:] -= q_bar
+
+    return outPath
+
+def som_forcingChecker(inPath:str, outPath:str|None = None, q_tol:float = 1e-5):
+    """
+    Checks if a forcing file has a net zero heat flux convergence in the ocean, and corrects it if not.
+
+    :param inPath: Path to file which will be checked and, possibly, modified.
+    :type inPath: str
+    :param outPath: The file to which a corrected copy will be written if needed. By default, is constructed based on inPath.
+    :type outPath: str or None, optional
+    :param q_tol: The allowed error (from 0) of mean heat flux convergence. If the mean has a greater value than q_tol, a correction is initiated.
+    :type q_tol: float
+    """
+    import numpy as np
+    from .utils import log
+
+    q_bar = som_meanHeatFlux(inPath)
+    log(f'Mean heat flux convergence is {q_bar} W/m^2')
+
+    if np.abs(q_bar) > q_tol:
+        log(f'Mean is greater than the tolerance, {q_tol}W/m^2. Correcting data...')
+        outPath = som_correctHeatFlux(inPath, q_bar, outPath)
+        log(f'All done. Corrected file is located at: {outPath}')
+        log(f'Output has mean heat flux {som_meanHeatFlux(outPath)} W/m^2')
+    else:
+        log(f'Mean is less than tolerance, {q_tol} W/m^2, so no corrections are needed. Exiting...')
+
 if __name__ == '__main__':
-    inFile = '/project/def-mlague/cmopfer/surfdata_0.9x1.25_hist_78pfts_CMIP6_simyr2000_c190214.nc'
+    originalFsurdatFile = '/project/def-mlague/cmopfer/surfdata_0.9x1.25_hist_78pfts_CMIP6_simyr2000_c190214.nc'
 
     # out_file = '/project/def-mlague/cmopfer/surfdata_forestToShrub.nc'
     # modify_PCT_NAT_PFT(in_file, out_file)
 
-    outFile = '/project/def-mlague/cmopfer/surfdata_woodedToGrass.nc'
-    smartDeforestation(inFile, outFile)
+    newFsurdatFile = '/project/def-mlague/cmopfer/surfdata_woodedToGrass.nc'
+    smartDeforestation(originalFsurdatFile, newFsurdatFile)
+
+    somFile = '/project/def-mlague/shared_sourcecode/cesm_source/cesm2_inputs/ocn/docn7/SOM/pop_frc.b.e21.BW1850.f09_g17.CMIP6-piControl.001.190514.nc'
+    som_forcingChecker(somFile)

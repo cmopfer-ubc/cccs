@@ -1,4 +1,7 @@
 __pycache__/
 
-# For when "pip install -e" is used
+# For when "pip install -e cccs" is used
 cccs.egg-info/
+
+# For when "pip install cccs" is used
+build/

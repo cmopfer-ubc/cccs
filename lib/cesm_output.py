@@ -3,14 +3,10 @@ Created: Camden Opfer, March 2026
 
 A collection of scripts to do basic analysis of CESM output
 """
-import os
-import glob
-import re
-import numpy as np
-import netCDF4 as nc
-from .utils import log
+# Imports for typing
+from numpy import ndarray as _ndarray
 
-def annual_mean(outputRoot:str, archive:bool = True, component:str = 'cam', variable:str = 'lev', years:list[str]|None = None, subset:slice|None = None, landWeight:bool = False) -> np.ndarray:
+def annual_mean(outputRoot:str, archive:bool = True, component:str = 'cam', variable:str = 'lev', years:list[str]|None = None, subset:slice|None = None, landWeight:bool = False) -> _ndarray:
     """
     Retrieves the average value of a variable across one year of CESM output from the monthly mean files of a specified model component. Can be fooled if there are weird files in your output directory, as this function searches through all available files for those containing "<component>.YYYY". The mean will always be weighted by grid cell size, and can optionally be weighted by how much land is in the grid cell (essentially masking the mean to land).
 
@@ -34,6 +30,12 @@ def annual_mean(outputRoot:str, archive:bool = True, component:str = 'cam', vari
     :return: The mean value of the chosen variable. Matches the type of the variable within the netCDF file, which is usually a numpy array or masked array.
     :rtype: np.ndarray
     """
+    import os
+    import glob
+    import numpy as np
+    import netCDF4 as nc
+    from .utils import log
+
     if component[-3:] != '.h0':
         component += '.h0'
 
@@ -111,6 +113,12 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
     :param returnPath: Path to a text file to which the output of this function will be written. Default is None, in which case cccs.utils.log will either print or log the output.
     :type returnPath: str or None, optional
     """
+    import os
+    import glob
+    import re
+    import netCDF4 as nc
+    from .utils import log
+
     def queryOutput(output, returnFile = returnPath):
         """
         Either logs the output of query() or saves it to the specified path.

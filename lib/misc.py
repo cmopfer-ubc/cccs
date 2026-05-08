@@ -1,11 +1,10 @@
 """
 Created: Camden Opfer, June 2025
 """
+# Imports for typing
+from numpy import ndarray as _ndarray
 
-import numpy as np
-from pyproj import Proj, Transformer
-
-def reproject(xIn:np.ndarray, yIn:np.ndarray, projTypeIn:str='utm', projTypeOut:str='latlong', datum:str='WGS84', utmZone:int=24):
+def reproject(xIn:_ndarray, yIn:_ndarray, projTypeIn:str='utm', projTypeOut:str='latlong', datum:str='WGS84', utmZone:int=24):
     """
     Converts coordinates between two projections.
     
@@ -22,6 +21,8 @@ def reproject(xIn:np.ndarray, yIn:np.ndarray, projTypeIn:str='utm', projTypeOut:
     :param utmZone: If one of the projTypes is 'utm', this zone is applied to it. Converting between two utm zones would require slight editing of this function, but is unlikely to be useful.
     :type utmZone: int
     """
+    from pyproj import Proj, Transformer
+
     if projTypeIn == 'utm':
         projIn = Proj(proj=projTypeIn, datum=datum, zone=utmZone)
     elif isinstance(projTypeIn, str) and 'EPSG' not in projTypeIn:
