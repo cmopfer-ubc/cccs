@@ -17,10 +17,10 @@ _grassIds = list(range(12,15))
 
 def fsurdat_checkValid(path:str, tol:float = 1e-5):
     """
-    Confirms that the sum of the percent natural PFTs are the same in two files. Useful after having modified an fsurdat file.
+    Confirms that the PCT_NAT_PFT values of an fsurdat file add to 100%. Useful after having modified an fsurdat file.
 
-    :param path1: A path to an fsurdat netCDF file.
-    :type path1: str
+    :param path: A path to an fsurdat netCDF file.
+    :type path: str
     :return: A boolean which is True when the file is found to be valid.
     :rtype: bool
     """
@@ -33,6 +33,7 @@ def fsurdat_checkValid(path:str, tol:float = 1e-5):
 
     PCT_NAT_PFT_tot = np.sum(PCT_NAT_PFT, axis=0)
     PCT_NAT_PFT_maxErr = np.nanmax(np.abs(PCT_NAT_PFT_tot - 100))
+
     if PCT_NAT_PFT_maxErr < tol:
         log(f'File {path} has valid PCT_NAT_PFT')
         return True
@@ -121,7 +122,7 @@ def modify_PCT_NAT_PFT(inPath:str, outPath:str, modificationDict:dict|None = Non
         data.variables['PCT_NAT_PFT'][:] = PCT_NAT_PFT
 
     log('Checking output file is valid to use as fsurdat, and is different from the input')
-    fsurdat_checkValid(inPath, outPath)
+    fsurdat_checkValid(inPath)
     confirmSuccess(inPath, outPath)
 
 def smartDeforestation(inPath:str, outPath:str, grassFracs:_ndarray|None = None, latLonRatio:float|int = 3):
@@ -193,7 +194,7 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:_ndarray|None = None,
         data.variables['PCT_NAT_PFT'][:] = PCT_NAT_PFT
 
     log('Checking output file is valid to use as fsurdat, and is different from the input')
-    fsurdat_checkValid(inPath, outPath)
+    fsurdat_checkValid(inPath)
     confirmSuccess(inPath, outPath)
 
 ### SOM Forcing ###
@@ -201,7 +202,7 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:_ndarray|None = None,
 def som_meanHeatFlux(path:str) -> float:
     """
     Finds the weighted mean heat flux convergence of the dataset at path. Although 'area' is provided in radians squared, no conversion to m^2 by Earth's radius is needed since the units cancel out (Wm^-2 * rad^2 / rad^2 = Wm^-2)
-    
+
     :param path: Path to input file, from which area and heat flux convergence can be read.
     :type path: str
     :returns: The mean heat flux convergence (Wm^-2) from the data read in
@@ -277,13 +278,17 @@ def som_forcingChecker(inPath:str, outPath:str|None = None, q_tol:float = 1e-5):
         log(f'Mean is less than tolerance, {q_tol} W/m^2, so no corrections are needed. Exiting...')
 
 if __name__ == '__main__':
-    originalFsurdatFile = '/project/def-mlague/cmopfer/surfdata_0.9x1.25_hist_78pfts_CMIP6_simyr2000_c190214.nc'
+    ## Sample Fsurdat modification
+    # originalFsurdatFile = '/project/rrg-mlague/cmopfer/cesm_cases/NdgParams_Ctrl_NoCrop/surfdata_1.9x2.5_simyr1850_glcmec10_c120927.nc'
+    originalFsurdatFile = '/project/def-mlague/shared_sourcecode/cesm_source/cesm2_inputs/lnd/clm2/surfdata_map/surfdata_0.9x1.25_16pfts_simyr1850_c170428.nc'
 
     # out_file = '/project/def-mlague/cmopfer/surfdata_forestToShrub.nc'
     # modify_PCT_NAT_PFT(in_file, out_file)
 
-    newFsurdatFile = '/project/def-mlague/cmopfer/surfdata_woodedToGrass.nc'
+    # newFsurdatFile = '/project/def-mlague/cmopfer/surfdata_woodedToGrass.nc'
+    newFsurdatFile = '/project/def-mlague/cmopfer/surfdata_woodedToGrass_1850.nc'
     smartDeforestation(originalFsurdatFile, newFsurdatFile)
 
+    ## Sample SOM File Correction
     somFile = '/project/def-mlague/shared_sourcecode/cesm_source/cesm2_inputs/ocn/docn7/SOM/pop_frc.b.e21.BW1850.f09_g17.CMIP6-piControl.001.190514.nc'
     som_forcingChecker(somFile)
