@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cccs"
-version = "2026.5.8"
+version = "2026.5.23"
 dependencies = [
   "numpy",
   "pyproj",

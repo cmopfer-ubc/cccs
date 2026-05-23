@@ -113,8 +113,8 @@ def log(message:str|Exception, logLevel:int|str=_INFO, loggerName:str=__name__):
     logger = logging.getLogger(loggerName)
 
     if not logger.hasHandlers(): # Logger has not been initialized
-        print(message)
-        return
+        createLogger(loggerName=loggerName)
+        logger = logging.getLogger(loggerName)
 
     if isinstance(message, Exception):
         logger.exception(message)
@@ -122,7 +122,8 @@ def log(message:str|Exception, logLevel:int|str=_INFO, loggerName:str=__name__):
 
     if isinstance(logLevel, str):
         try:
-            logLevel = {'debug':logging.DEBUG, 'info':logging.INFO, 'warning':logging.WARNING, 'error':logging.ERROR, 'critical':logging.CRITICAL}[logLevel.lower()]
+            logLevelTranslator = {'debug':logging.DEBUG, 'info':logging.INFO, 'warning':logging.WARNING, 'error':logging.ERROR, 'critical':logging.CRITICAL}
+            logLevel = logLevelTranslator[logLevel.lower()]
         except KeyError:
             logger.log(level = logging.WARNING, msg = f'Invalid log level "{logLevel}". Will default to info.')
             logLevel = logging.INFO

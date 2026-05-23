@@ -224,6 +224,68 @@ def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, 
     fig.savefig(savePath, bbox_inches='tight', dpi=200)
     plt.close(fig)
 
+def profiles(pressure:_ndarray, data:list[_ndarray], title:str, xLabel:str, dataLabels:list[str]|None = None, diffs:bool = True, pMin = 300, savePath:str|None = None):
+    """
+    Plots vertical profiles of data against pressure.
+
+    TODO Parameter/type annotations
+    """
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import StrMethodFormatter, NullFormatter
+
+    pMax = np.max(pressure)
+
+    diffs = diffs and len(data) > 1 # Ensure diff plot is only set up if it will actually have data
+
+    if diffs:
+        fig, axs = plt.subplots(1, 2, layout='tight', figsize=(8,5))
+    else:
+        fig, loneAx = plt.subplots(figsize=(4,5))
+        axs = [loneAx]
+
+    ticks = np.logspace(np.log10(pMax-10), np.log10(pMin+10), 6)
+    ticks = np.round(ticks / 10) * 10
+
+    # Axis setup- Mostly y axis being upside-down and log for pressure
+    for ax in axs:
+        ax.yaxis.set_inverted(True)
+        ax.set_yscale('log')
+        ax.set_ylim(bottom=pMax, top=pMin)
+
+        ax.set_yticks(ticks)
+        ax.tick_params(axis='y', which='minor', left=False)
+        ax.yaxis.set_major_formatter(StrMethodFormatter('{x:.0f}'))
+        ax.yaxis.set_minor_formatter(NullFormatter())
+
+        ax.set_ylabel('Pressure ($hPa$)')
+        ax.set_xlabel(xLabel)
+        ax.set_title(title)
+
+        ax.axhline(pressure[0], c='grey', alpha=0.2, linewidth=1, label='Model Levels')
+        for p in pressure[1:]:
+            ax.axhline(p, c='grey', alpha=0.2, linewidth=1)
+        ax.legend(loc='lower left')
+
+    # Plot profiles directly
+    for i, (prof, dataLabel) in enumerate(zip(data, dataLabels)):
+        axs[0].plot(prof, pressure, label=dataLabel)
+
+        if diffs and i != 0:
+            # Plot differences between data's elements 1 on to element 0
+            diff = prof - data[0]
+            axs[1].plot(diff, pressure, label=f'{dataLabel} Minus {dataLabels[0]}')
+
+    # Save and clear figure
+    if savePath is None:
+        savePath = '.'
+    if os.path.splitext(savePath)[-1] == '': # No file extension. May be tricked by a file name containing '.'
+        savePath += '.png'
+    os.makedirs(os.path.dirname(savePath), exist_ok=True)
+    fig.savefig(savePath, bbox_inches='tight', dpi=200)
+    plt.close(fig)
+
 def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:_ndarray, savePath:str, title:str, legend:bool = True, dataLabels:list|None = None):
     """
     A function built to map three variables, each as their own colour, with overlapping regions showing a mixture of the relevant colours. As an example of when this could be useful: this was originally developed to plot how much the three grass PFTs were increased in a deforested fsurdat file.
@@ -341,21 +403,21 @@ def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:
     fig.savefig(savePath, bbox_inches='tight', dpi=200)
     plt.close(fig)
 
-if __name__ == '__main__':
-    import netCDF4 as nc
+# if __name__ == '__main__':
+    ## threeVar example with fsurdat changes
+    # import netCDF4 as nc
+    # fsurdatPath = '/home/cmopfer/projects/def-mlague/cmopfer/surfdata_0.9x1.25_hist_78pfts_CMIP6_simyr2000_c190214.nc'
+    # diffPath = '/home/cmopfer/projects/def-mlague/cmopfer/surfdata_woodedToGrass_diff0.nc'
+    # plotPath = '/home/cmopfer/projects/def-mlague/cmopfer/grassDiff_woodedToGrass'
 
-    fsurdatPath = '/home/cmopfer/projects/def-mlague/cmopfer/surfdata_0.9x1.25_hist_78pfts_CMIP6_simyr2000_c190214.nc'
-    diffPath = '/home/cmopfer/projects/def-mlague/cmopfer/surfdata_woodedToGrass_diff0.nc'
-    plotPath = '/home/cmopfer/projects/def-mlague/cmopfer/grassDiff_woodedToGrass'
+    # fsurdat = nc.Dataset(fsurdatPath)
+    # lat_fsurdat = fsurdat.variables['LATIXY'][:]
+    # lon_fsurdat = fsurdat.variables['LONGXY'][:]
 
-    fsurdat = nc.Dataset(fsurdatPath)
-    lat_fsurdat = fsurdat.variables['LATIXY'][:]
-    lon_fsurdat = fsurdat.variables['LONGXY'][:]
+    # diff = nc.Dataset(diffPath)
+    # PCT_NAT_PFT_diff = diff.variables['PCT_NAT_PFT']
+    # c3Arctic_diff = -PCT_NAT_PFT_diff[12][:]
+    # c3_diff = -PCT_NAT_PFT_diff[13][:]
+    # c4_diff = -PCT_NAT_PFT_diff[14][:]
 
-    diff = nc.Dataset(diffPath)
-    PCT_NAT_PFT_diff = diff.variables['PCT_NAT_PFT']
-    c3Arctic_diff = -PCT_NAT_PFT_diff[12][:]
-    c3_diff = -PCT_NAT_PFT_diff[13][:]
-    c4_diff = -PCT_NAT_PFT_diff[14][:]
-
-    threeVar(c3Arctic_diff, c3_diff, c4_diff, lon_fsurdat, lat_fsurdat, plotPath, 'Added Grass PFTs In Deforested Simulation')
+    # threeVar(c3Arctic_diff, c3_diff, c4_diff, lon_fsurdat, lat_fsurdat, plotPath, 'Added Grass PFTs In Deforested Simulation')
