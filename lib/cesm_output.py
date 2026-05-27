@@ -5,7 +5,6 @@ A collection of scripts to do basic aggregation and analysis of CESM output
 """
 # Imports for typing
 from numpy import ndarray as _ndarray
-from netCDF4._netCDF4 import Variable as _Variable
 
 _componentToDir = {'cam': 'atm', 'clm2': 'lnd', 'mosart': 'rof', 'pop': 'ocn'} # TODO Add more components as needed. Maybe even more options of models that run for the same component (e.g. do pop and mom have differently named output files?)
 
@@ -173,7 +172,7 @@ def getPaths(outputRoot:str, archive:bool = True, component:str = 'cam', fileHVa
 
     return allFiles
 
-def avgOverDims(fPath:str, varName:str, dimNames:list[str]|None=None, landWeight=True) -> tuple[_ndarray, int]:
+def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWeight=True) -> tuple[_ndarray, int]:
     """
     Identifies if provided dimNames correspond to dimensions of the provided data and, if so, takes an average along those dimensions. By default, takes the average in all dimensions. More useful cases for this function would be avgOverDims(x, ['time']), avgOverDims(y, ['lat', 'lon']), or avgOverDims(z, ['lev']).
 
@@ -197,83 +196,112 @@ def avgOverDims(fPath:str, varName:str, dimNames:list[str]|None=None, landWeight
     import netCDF4 as nc
     from .utils import log
 
-    outputBase = os.path.basename(fPath)
-    def getGridArea():
-        """
-        Gets the 'area' variable of a clm output file for use in masking to land. Could fail if h0 files don't have this variable, or if smartAvg was pointed towards an outputBase without clm2 output.
-        """
-        # Assume archive-style directory structure
-        clmPattern = os.path.join(outputBase, '..', '..', 'lnd', 'hist', '*.clm2.h0.*.nc')
-        clmFiles = glob.glob(clmPattern)
-        if not clmFiles: # Archive-style was unsuccessful
-            # Assume all data in the same directory
-            clmFiles = glob.glob(os.path.join(outputBase, '*.clm2.h0.*.nc'))
-        if not clmFiles: # Both attempts were unsuccessful
-            log('Searching for CLM output file with grid area failed, so avgOverDims() will not apply an area weighting.', 'warning')
-            return 1
+    outputBase = os.path.basename(dataFile)
 
-        with nc.Dataset(clmFiles[0], 'r') as clmDummy:
-            area = clmDummy.variables['area'][:]
-        log(f'Retrieved grid cell area from land data in {clmFiles[0]}', 'debug')
-        return area
+    def findCamDummy():
+        """"
+        I found the Cam dummy! He's writing this code.
 
-    def getLandFrac():
-        """
-        Gets the 'LANDFRAC' variable of a cam output file for use in masking to land. Could fail if h0 files don't have this variable, or if avgOverDims was pointed towards an outputBase without cam output.
+        Get it? Because my name is Camden! Hahaha
         """
         # Assume archive-style directory structure
         camPattern = os.path.join(outputBase, '..', '..', 'atm', 'hist', '*.cam.h0.*.nc')
         camFiles = glob.glob(camPattern)
-        if not camFiles: # Archive-style was unsuccessful
+
+        if not camFiles: # Archive-style search was unsuccessful
             # Assume all data in the same directory
             camFiles = glob.glob(os.path.join(outputBase, '*.cam.h0.*.nc'))
-        if not camFiles: # Both attempts were unsuccessful
-            log('Searching for CAM output file with land fraction failed, so avgOverDims() will not apply a land fraction weighting.', 'warning')
+
+        if not camFiles:
+            # Everything failed. Expect the function calling this to catch it and raise a warning
+            return
+
+        return camFiles[0]
+
+    def getWeightVar(ds, name):
+        """
+        Applies relevant functions to variables so they can be used to weight data.
+        """
+        if name == 'lev':
+            # Weight by (Delta P)/g
+            ilev = ds.variables['ilev'][:] # Has one more element than lev, making difference easier
+            out = ilev[1:] - ilev[:-1]
+            out /= 9.8
+            return out
+
+        if name == 'lev':
+            # Weight by (Delta P)/g
+            lev = ds.variables['lev'][:] # Has one less element than ilev, but still useful since it's spatially the half-way points
+            diff = lev[1:] - lev[:-1]
+            out = np.array([diff[0] + diff.tolist(), diff[-1]])
+            out /= 9.8
+            return out
+
+        out = ds.variables[name]
+        if name == 'lat':
+            return np.cos(np.deg2rad(out))
+        return out
+
+    def getFromCamDummy(outShape:tuple[int], varDimsToNames:dict[int:str]):
+        """
+        Gets the variable given by varNames (or all the elements of the list varNames) from a cam output file for use in weighting. Could fail if h0 files don't have this variable, or if avgOverDims was pointed towards an outputBase without cam output in a typical relative location.
+        """
+        if not varDimsToNames:
+            # Factor to mutliply is 1 since no weighting is being done
             return 1
 
-        with nc.Dataset(camFiles[0], 'r') as camDummy:
-            landFrac = camDummy.variables['LANDFRAC'][:]
-        log(f'Retrieved land fraction from atmospheric data in {camFiles[0]}', 'debug')
-        return landFrac
+        camPath = findCamDummy()
 
-    with nc.Dataset(fPath) as ds:
-        var = ds.variables[varName]
-    if dimNames is None:
-        return np.nanmean(var[:])
+        if camPath is None:
+            log(f'Unable to find CAM data in {outputBase} or {os.path.join(outputBase, '..', '..', 'atm', 'hist')}. Will not do any weighting by {varDimsToNames.values()}', 'warning')
+            return 1
 
-    actualDimNames = [dim.name for dim in var.get_dims()]
+        weightFactor = np.ones(outShape)
+        with nc.Dataset(camPath, 'r') as camDummy:
+            for varDim, varName in varDimsToNames.items():
+                var = getWeightVar(camDummy, varName) # Will be 1D array with shape (outShape[i], )
+                inds = (..., ) + (None, ) * (len(outShape) - varDim - 1) # Indexing by inds will empty axes extending to last dim of weightFactor. So shape will be (outShape[i], 1, 1, ..., 1). See Numpy docs on broadcasting: https://numpy.org/doc/stable/reference/arrays.nditer.html#broadcasting-array-iteration
+                weightFactor *= var[inds]
 
+        log(f'Retrieved {varDimsToNames.values()} from atmospheric data in {camPath}', 'debug')
+        return weightFactor/np.sum(weightFactor)
+
+    with nc.Dataset(dataFile) as data:
+        ncVar = data.variables[varName]
+    raw = ncVar[:]
+
+    actualDimNames = [dim.name for dim in ncVar.get_dims()]
+
+    possibleFactorVars = ['lat', 'lev', 'ilev'] # TODO Allow for CLM and other input, where lat/lon are named differently
+    factorVars = {}
     matchingDims = []
-    dimsToAvgOver = tuple()
+
     for dimName in dimNames:
         try:
             dimInd = actualDimNames.index(dimName)
-            matchingDims += [dimName]
-            dimsToAvgOver = dimsToAvgOver + (dimInd,)
+        except ValueError: # This variable does not have dimension dimName
+            continue # Skip to next dimName
+        matchingDims += [dimName]
+        dimsToAvgOver = dimsToAvgOver + (dimInd,)
+
+        if dimName in possibleFactorVars:
+            factorVars[dimInd] = dimName
+
+    if landWeight:
+        try:
+            latDim = actualDimNames.index('lat') # TODO Allow for CLM and other input, where lat/lon are named differently
+            lonDim = actualDimNames.index('lon')
         except ValueError:
-            # Variable does not have dimension dimName
-            pass
+            log('Unable to apply land weighting because one of lat and lon are not dimensions of the provided variable', 'warning')
+        lastDim = max(latDim, lonDim) # So that empty dims are added after the LANDFRAC mask
+        factorVars[lastDim] = 'LANDFRAC'
 
     log(f'avgOverDims found the following dimensions to average over: {matchingDims}', 'debug')
+    log(f'A weighted average will be taken over {factorVars}', 'debug')
 
-    if 'lat' in matchingDims and 'lon' in matchingDims:
-        # Area weighting
-        area = getGridArea()
-        areaFactor = area/np.sum(area)
+    weights = getFromCamDummy(raw.shape, factorVars)
+    raw *= weights
 
-        var *= areaFactor # May have strange behaviour if var has multiple dimensions of the same size. Would be much less readable, but could specify which dimensions to align things to with something like [None, None, ..., None] tailored to the shape of var
-
-        # Land fraction weighting
-        if landWeight:
-            landFrac = getLandFrac()
-            var *= landFrac
-    elif 'lat' in matchingDims:
-        pass # TODO Add something that takes the zonal mean of grid area (since it should be basically all the same), and uses that as area weighting. Could also take the zonal mean of landfrac?
-    elif 'lon' in matchingDims:
-        pass # TODO? Add meridional means of area and landfrac being used as factors?
-
-    # TODO Add an "if 'lev' in matchingDims:" block that triggers some sort of weighting. Maybe have options for 'weight by pressure' and 'weight by height'
-
-    averagedArr = np.nanmean(var[:], axis=dimsToAvgOver)
+    averagedArr = np.nanmean(raw[:], axis=dimsToAvgOver)
 
     return averagedArr
