@@ -136,8 +136,8 @@ def getPaths(outputRoot:str, archive:bool = True, component:str = 'cam', fileHVa
 
     if component not in _componentToDir:
         raise ValueError(f'Invalid argument {component} for component in getPaths. Must be one of {_componentToDir.keys()}')
-    if fileHVal not in list(str(i) for i in range(10)):
-        raise ValueError(f'Invalid argument {fileHVal} for fileHVal in getPaths. Must be one of {list(str(i) for i in range(10))}')
+    if fileHVal not in list(str(i) for i in range(10)) and fileHVal is not None:
+        raise ValueError(f'Invalid argument {fileHVal} for fileHVal in getPaths. Must be one of {list(str(i) for i in range(10))} or None')
 
     if archive:
         dataRoot = os.path.join(outputRoot, _componentToDir[component], 'hist')

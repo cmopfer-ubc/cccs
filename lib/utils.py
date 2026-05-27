@@ -80,17 +80,23 @@ def createLogger(logFile:str|None = None, loggerName:str = __name__, propagatedL
         propagatedLogger = logging.getLogger(loggerName)
 
         existingHandlers = propagatedLogger.handlers
-        needFh, needCh = True, True
+        needCh = True
+        for existingHandler in existingHandlers:
+            if isinstance(existingHandler, logging.StreamHandler) and existingHandler.stream == ch.stream:
+                needCh = False
+        if needCh:
+            propagatedLogger.addHandler(ch)
+
+        if logFile is None:
+            return
+
+        needFh = True
         for existingHandler in existingHandlers:
             if isinstance(existingHandler, logging.FileHandler) and existingHandler.baseFilename == fh.baseFilename:
                 needFh = False
-            elif isinstance(existingHandler, logging.StreamHandler) and existingHandler.stream == ch.stream:
-                needCh = False
 
-        if needFh:
+        if logFile is not None and needFh:
             propagatedLogger.addHandler(fh)
-        if needCh:
-            propagatedLogger.addHandler(ch)
 
     for propagatedLoggerName in propagatedLoggerNames:
         propagateLogger(propagatedLoggerName)
