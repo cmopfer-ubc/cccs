@@ -159,8 +159,8 @@ def getPaths(outputRoot:str, archive:bool = True, component:str = 'cam', fileHVa
 
     fileSpecs = ['*' + '.' + component + '.' + fileHVal + '.'] * timeOptCount * 2
     for i, (y, m, d, s) in enumerate(product(year, month, day, second)): # product iterates over all combinations of the provided lists
-        fileSpecs[i] += y + '-' + m + '-' + d + '-' + s # Used by CESM when output frequency is high enough
-        fileSpecs[2*i] += y + '-' + m # Used by CESM when output frequency is low enough
+        fileSpecs[2*i] += y + '-' + m + '-' + d + '-' + s # Used by CESM when output frequency is high enough
+        fileSpecs[2*i+1] += y + '-' + m # Used by CESM when output frequency is low enough
 
     allFiles = [] # Can't pre-allocate in case wildcards (*'s) lead to multiple hits
     for fileSpec in fileSpecs:
@@ -225,21 +225,21 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
         if name == 'lev':
             # Weight by (Delta P)/g
             ilev = ds.variables['ilev'][:] # Has one more element than lev, making difference easier
-            out = ilev[1:] - ilev[:-1]
-            out /= 9.8
-            return out
+            out = ilev[1:] - ilev[:-1] # TODO Confirm that this is indexed corretly to result in an all-positive out
 
-        if name == 'lev':
+        elif name == 'lev':
             # Weight by (Delta P)/g
             lev = ds.variables['lev'][:] # Has one less element than ilev, but still useful since it's spatially the half-way points
             diff = lev[1:] - lev[:-1]
             out = np.array([diff[0] + diff.tolist(), diff[-1]])
-            out /= 9.8
-            return out
 
-        out = ds.variables[name]
+        else:
+            out = ds.variables[name]
+
         if name == 'lat':
-            return np.cos(np.deg2rad(out))
+            out = np.cos(np.deg2rad(out))
+
+        out /= np.nanmean(out)
         return out
 
     def getFromCamDummy(outShape:tuple[int], varDimsToNames:dict[int:str]):
@@ -266,13 +266,15 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
         log(f'Retrieved {varDimsToNames.values()} from atmospheric data in {camPath}', 'debug')
         return weightFactor/np.sum(weightFactor)
 
-    with nc.Dataset(dataFile) as data:
+    if dimNames is None:
+        dimNames = [] # TODO Differentiate between differentiating over everything and nothing
+
+    with nc.Dataset(dataFile, 'r') as data:
         ncVar = data.variables[varName]
-    raw = ncVar[:]
+        raw = ncVar[:]
+        actualDimNames = [dim.name for dim in ncVar.get_dims()]
 
-    actualDimNames = [dim.name for dim in ncVar.get_dims()]
-
-    possibleFactorVars = ['lat', 'lev', 'ilev'] # TODO Allow for CLM and other input, where lat/lon are named differently
+    possibleFactorVars = ['lat', 'lev', 'ilev'] # TODO Allow for CLM and other input, where lat is named differently
     factorVars = {}
     matchingDims = []
 
@@ -303,5 +305,7 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
     raw *= weights
 
     averagedArr = np.nanmean(raw[:], axis=dimsToAvgOver)
+
+    averagedArr = np.squeeze(averagedArr)
 
     return averagedArr

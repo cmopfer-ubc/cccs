@@ -220,7 +220,9 @@ def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, 
         savePath = '.'
     if os.path.splitext(savePath)[-1] == '': # No file extension. May be tricked by a file name containing '.'
         savePath += '.png'
-    os.makedirs(os.path.dirname(savePath), exist_ok=True)
+    saveDir = os.path.dirname(savePath)
+    if saveDir:
+        os.makedirs(saveDir, exist_ok=True)
     fig.savefig(savePath, bbox_inches='tight', dpi=200)
     plt.close(fig)
 
@@ -282,7 +284,9 @@ def profiles(pressure:_ndarray, data:list[_ndarray], title:str, xLabel:str, data
         savePath = '.'
     if os.path.splitext(savePath)[-1] == '': # No file extension. May be tricked by a file name containing '.'
         savePath += '.png'
-    os.makedirs(os.path.dirname(savePath), exist_ok=True)
+    saveDir = os.path.dirname(savePath)
+    if saveDir:
+        os.makedirs(saveDir, exist_ok=True)
     fig.savefig(savePath, bbox_inches='tight', dpi=200)
     plt.close(fig)
 
@@ -399,7 +403,9 @@ def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:
     # Save and clear figure
     if os.path.splitext(savePath)[1] == '': # No file extension. May be tricked by a file name containing '.'
         savePath += '.png'
-    os.makedirs(os.path.dirname(savePath), exist_ok=True)
+    saveDir = os.path.dirname(savePath)
+    if saveDir:
+        os.makedirs(saveDir, exist_ok=True)
     fig.savefig(savePath, bbox_inches='tight', dpi=200)
     plt.close(fig)
 
