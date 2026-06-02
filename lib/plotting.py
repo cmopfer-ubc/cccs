@@ -7,7 +7,31 @@ A bunch of plotting functions for input and output files related to CESM
 from numpy import ndarray as _ndarray
 from matplotlib.axis import Axis as _Axis
 from cartopy.mpl.geoaxes import GeoAxes as _GeoAxes
+from matplotlib.figure import Figure as _Figure
 
+def saveFig(fig:_Figure, savePath:str, saveDpi:int|float|None = 200):
+    """
+    Ensures the relevant directories exist, that the save path ends in a file extension, and then saves the figure out.
+
+    :param fig: The figure object to save out as an image
+    :type fig: matplotlib.figure.Figure
+    :param savePath: The path, including filename, to which the image will be saved
+    :type savePath: str
+    :param saveDpi: The dpi to use when rendering and saving the image. If None, uses the figure's specified DPI. Default is 200
+    :type saveDpi: int or float or None, optional
+    """
+    import os
+
+    if saveDpi is None:
+        saveDpi = 'figure'
+
+    if os.path.splitext(savePath)[1] == '': # No file extension. May be tricked by a file name containing '.'
+        savePath += '.png'
+    saveDir = os.path.dirname(savePath)
+    if saveDir:
+        os.makedirs(saveDir, exist_ok=True)
+    fig.savefig(savePath, bbox_inches='tight', dpi=saveDpi)
+    # plt.close(fig)
 
 def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, cbarType:str = 'linear', cmap:str|None = None, vlims:list|None = None, contourIntervals:int = 100, percentExcluded:int|float = 0, ax:_Axis|_GeoAxes|None = None, returnAx:bool = False, savePath:str|None = None):
     """
@@ -44,7 +68,6 @@ def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, 
     :rtype: None or cartopy.mpl.geoaxes.GeoAxes
     :raises ValueError: Raised when cbarType is not a valid option ('linear', 'log', or 'diverging')
     """
-    import os
     import warnings
     from math import ceil
     import numpy as np
@@ -216,14 +239,7 @@ def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, 
         return plotAx
 
     # Save and clear figure
-    if savePath is None:
-        savePath = '.'
-    if os.path.splitext(savePath)[-1] == '': # No file extension. May be tricked by a file name containing '.'
-        savePath += '.png'
-    saveDir = os.path.dirname(savePath)
-    if saveDir:
-        os.makedirs(saveDir, exist_ok=True)
-    fig.savefig(savePath, bbox_inches='tight', dpi=200)
+    saveFig(fig, savePath, saveDpi = 200)
     plt.close(fig)
 
 def profiles(pressure:_ndarray, data:list[_ndarray], title:str, xLabel:str, dataLabels:list[str]|None = None, diffs:bool = True, pMin = 300, savePath:str|None = None):
@@ -232,7 +248,6 @@ def profiles(pressure:_ndarray, data:list[_ndarray], title:str, xLabel:str, data
 
     TODO Parameter/type annotations
     """
-    import os
     import numpy as np
     import matplotlib.pyplot as plt
     from matplotlib.ticker import StrMethodFormatter, NullFormatter
@@ -280,14 +295,7 @@ def profiles(pressure:_ndarray, data:list[_ndarray], title:str, xLabel:str, data
             axs[1].plot(diff, pressure, label=f'{dataLabel} Minus {dataLabels[0]}')
 
     # Save and clear figure
-    if savePath is None:
-        savePath = '.'
-    if os.path.splitext(savePath)[-1] == '': # No file extension. May be tricked by a file name containing '.'
-        savePath += '.png'
-    saveDir = os.path.dirname(savePath)
-    if saveDir:
-        os.makedirs(saveDir, exist_ok=True)
-    fig.savefig(savePath, bbox_inches='tight', dpi=200)
+    saveFig(fig, savePath, saveDpi = 200)
     plt.close(fig)
 
 def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:_ndarray, savePath:str, title:str, legend:bool = True, dataLabels:list|None = None):
@@ -313,7 +321,6 @@ def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:
     :param dataLabels: The list of labels to use, with three elements corresponding to data1, data2, and data3 respectively. Default is ['C3 Arctic', 'C3', 'C4'], used when plotting the three grass PFTs of CESM. Has no effect when legend = False.
     :type dataLabels: list or None, optional
     """
-    import os
     import numpy as np
     import matplotlib.pyplot as plt
     import cartopy.crs as ccrs
@@ -361,9 +368,13 @@ def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:
     ax.add_feature(cfeature.LAND, edgecolor='none', facecolor='dimgray')
 
     ## Colorbar extraordinaire
-    def makeLegend(dataLabels, res = 500):
-        # Legend height
+    def threeVarLegend(dataLabels, res = 500):
+        """
+        The kind of function you trust someone on Stack Overflow to provide, and don't question. Makes a triangle showing what each colour corresponds to.
+        """
+        # Legend dims
         h = np.sqrt(3)/2
+        w = 1.
 
         # Legend grid
         x = np.linspace(0, 1, res)
@@ -371,19 +382,19 @@ def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:
         X, Y = np.meshgrid(x, y)
 
         # Triangle vertices
-        v1 = np.array([0.5, h])
+        v1 = np.array([w/2, h])
         v2 = np.array([0.0, 0.0])
-        v3 = np.array([1.0, 0.0])
+        v3 = np.array([w, 0.0])
 
-        # Crazy math to find distances to each vertex. Why it works: someone on stack overflow sold his soul to the devil, and I trust them
-        detT = (v2[1]-v3[1])*(v1[0]-v3[0]) + (v3[0]-v2[0])*(v1[1]-v3[1])
+        # Crazy math to find distances to each vertex
+        detT = (v2[1]-v3[1]) * (v1[0]-v3[0]) + (v3[0]-v2[0]) * (v1[1]-v3[1])
 
-        A = ((v2[1]-v3[1])*(X-v3[0]) + (v3[0]-v2[0])*(Y-v3[1])) / detT
-        B = ((v3[1]-v1[1])*(X-v3[0]) + (v1[0]-v3[0])*(Y-v3[1])) / detT
+        A = ((v2[1]-v3[1]) * (X-v3[0]) + (v3[0]-v2[0]) * (Y-v3[1]))/detT
+        B = ((v3[1]-v1[1]) * (X-v3[0]) + (v1[0]-v3[0]) * (Y-v3[1]))/detT
         C = 1 - A - B
 
         # Make image
-        img = (A[...,None]*blue + B[...,None]*orange + C[...,None]*purple)
+        img = (A[...,None] * blue + B[...,None] * orange + C[...,None] * purple)
         mask = (A>=0) & (B>=0) & (C>=0)
         img[~mask] = 1
 
@@ -391,22 +402,17 @@ def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:
         ax2 = fig.add_axes([1.05, 0.4, 0.2, 0.2])
         ax2.axis('off')
 
-        ax2.imshow(img, origin="lower", extent=[0,1,0,h])
+        ax2.imshow(img, origin="lower", extent=[0,w,0,h])
 
-        ax2.text(0.5, h+0.03, dataLabels[0], ha='center')
-        ax2.text(-0.02, -0.03, dataLabels[1], ha='right')
-        ax2.text(1.02, -0.03, dataLabels[2], ha='left')
+        ax2.text(w/2, h * 1.03, dataLabels[0], ha='center')
+        ax2.text(-w * .02, -h * 0.03, dataLabels[1], ha='right')
+        ax2.text(w * 1.02, -h * 0.03, dataLabels[2], ha='left')
 
     if legend:
-        makeLegend(dataLabels)
+        threeVarLegend(dataLabels)
 
     # Save and clear figure
-    if os.path.splitext(savePath)[1] == '': # No file extension. May be tricked by a file name containing '.'
-        savePath += '.png'
-    saveDir = os.path.dirname(savePath)
-    if saveDir:
-        os.makedirs(saveDir, exist_ok=True)
-    fig.savefig(savePath, bbox_inches='tight', dpi=200)
+    saveFig(fig, savePath, saveDpi = 200)
     plt.close(fig)
 
 # if __name__ == '__main__':

@@ -7,6 +7,7 @@ A collection of scripts to do basic aggregation and analysis of CESM output
 from numpy import ndarray as _ndarray
 
 _componentToDir = {'cam': 'atm', 'clm2': 'lnd', 'mosart': 'rof', 'pop': 'ocn'} # TODO Add more components as needed. Maybe even more options of models that run for the same component (e.g. do pop and mom have differently named output files?)
+_latNames = ['lat', 'TLAT', 'ULAT', 'doma_lat', 'slat']
 
 def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileSpec:str|None = None,  returnPath:str|None = None):
     """
@@ -178,11 +179,11 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
 
     This function does NOT modify the NetCDF file from which ncVar is derived, even if write mode is on. That would require something like myNcVar[:] = avgOverDim(myNcVar), though you'd also want to delete the metadata for the removed dimensions.
 
-    :param fPath: Path to the file from which data will be derived.
-    :type fPath: str
+    :param dataFile: Path to the file from which data will be derived.
+    :type dataFile: str
     :param varName: The variable to be averaged. Must be included as a variable in fPath.
     :type varName: str
-    :param dimNames: A list of strings. If any of the strings matches the name of a dimension of ncVar, that dimension will be averaged across. If an element of dimNames is not a dimension of ncVar, it will be silently skipped. By default, averages over all dimensions.
+    :param dimNames: A list of strings. If any of the strings matches the name of a dimension of ncVar, that dimension will be averaged across. If an element of dimNames is not a dimension of ncVar, it will be silently skipped. By default, does not take any averages.
     :type dimNames: list[str] or None, optional
     :param landWeight: A boolean determining whether or not to weight the average by the amount of land in each grid cell. Default is True, so the average will be weighted.
     :type landWeight: bool, optional
@@ -192,18 +193,22 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
     """
     import os
     import glob
+    import warnings
     import numpy as np
     import netCDF4 as nc
     from .utils import log
 
     outputBase = os.path.basename(dataFile)
 
-    def findCamDummy():
+    def getNcVar(ds, varName):
         """"
-        I found the Cam dummy! He's writing this code.
-
-        Get it? Because my name is Camden! Hahaha
+        Tries to get the data from the provided dataset. If that fails, finds a CAM dataset to use. CAM is sometimes needed for LANDFRAC
         """
+        try:
+            return ds.variables[varName]
+        except KeyError:
+            log(f'Variable {varName} not found  by avgOverDims() in provided dataset. Will check for it in related CAM output.', 'debug')
+
         # Assume archive-style directory structure
         camPattern = os.path.join(outputBase, '..', '..', 'atm', 'hist', '*.cam.h0.*.nc')
         camFiles = glob.glob(camPattern)
@@ -212,37 +217,42 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
             # Assume all data in the same directory
             camFiles = glob.glob(os.path.join(outputBase, '*.cam.h0.*.nc'))
 
-        if not camFiles:
-            # Everything failed. Expect the function calling this to catch it and raise a warning
-            return
+        if camFiles:
+            with nc.Dataset(camFiles[0], 'r') as camDs:
+                try:
+                    return camDs.variables[varName]
+                except KeyError:
+                    pass
 
-        return camFiles[0]
+        # Either camFiles was still empty, or the chosen variable was not found in the CAM data. Either way, skip weighting by this variable
+        warnings.warn(f'Variable {varName} not found in the provided dataset, and unable to fetch it from a related CAM file. avgOverDims will skip weighting by {varName}.')
+        return 1
 
-    def getWeightVar(ds, name):
+    def getSingleWeight(ds, varName):
         """
         Applies relevant functions to variables so they can be used to weight data.
         """
-        if name == 'lev':
+        if varName == 'lev':
             # Weight by (Delta P)/g
             ilev = ds.variables['ilev'][:] # Has one more element than lev, making difference easier
             out = ilev[1:] - ilev[:-1] # TODO Confirm that this is indexed corretly to result in an all-positive out
 
-        elif name == 'lev':
+        elif varName == 'lev':
             # Weight by (Delta P)/g
             lev = ds.variables['lev'][:] # Has one less element than ilev, but still useful since it's spatially the half-way points
             diff = lev[1:] - lev[:-1]
             out = np.array([diff[0] + diff.tolist(), diff[-1]])
 
         else:
-            out = ds.variables[name]
+            out = getNcVar(ds, varName)
 
-        if name == 'lat':
+        if varName in _latNames:
             out = np.cos(np.deg2rad(out))
 
         out /= np.nanmean(out)
         return out
 
-    def getFromCamDummy(outShape:tuple[int], varDimsToNames:dict[int:str]):
+    def getWeights(dataPath:str, outShape:tuple[int], varDimsToNames:dict[int:str]):
         """
         Gets the variable given by varNames (or all the elements of the list varNames) from a cam output file for use in weighting. Could fail if h0 files don't have this variable, or if avgOverDims was pointed towards an outputBase without cam output in a typical relative location.
         """
@@ -250,33 +260,32 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
             # Factor to mutliply is 1 since no weighting is being done
             return 1
 
-        camPath = findCamDummy()
-
-        if camPath is None:
+        if dataPath is None:
             log(f'Unable to find CAM data in {outputBase} or {os.path.join(outputBase, '..', '..', 'atm', 'hist')}. Will not do any weighting by {varDimsToNames.values()}', 'warning')
             return 1
 
         weightFactor = np.ones(outShape)
-        with nc.Dataset(camPath, 'r') as camDummy:
+        with nc.Dataset(dataPath, 'r') as data:
             for varDim, varName in varDimsToNames.items():
-                var = getWeightVar(camDummy, varName) # Will be 1D array with shape (outShape[i], )
+                var = getSingleWeight(data, varName) # Will be 1D array with shape (outShape[i], )
                 inds = (..., ) + (None, ) * (len(outShape) - varDim - 1) # Indexing by inds will empty axes extending to last dim of weightFactor. So shape will be (outShape[i], 1, 1, ..., 1). See Numpy docs on broadcasting: https://numpy.org/doc/stable/reference/arrays.nditer.html#broadcasting-array-iteration
                 weightFactor *= var[inds]
 
-        log(f'Retrieved {varDimsToNames.values()} from atmospheric data in {camPath}', 'debug')
+        log(f'Retrieved {varDimsToNames.values()} from data in {dataPath}', 'debug')
         return weightFactor/np.sum(weightFactor)
-
-    if dimNames is None:
-        dimNames = [] # TODO Differentiate between differentiating over everything and nothing
 
     with nc.Dataset(dataFile, 'r') as data:
         ncVar = data.variables[varName]
         raw = ncVar[:]
         actualDimNames = [dim.name for dim in ncVar.get_dims()]
 
-    possibleFactorVars = ['lat', 'lev', 'ilev'] # TODO Allow for CLM and other input, where lat is named differently
+    if dimNames is None:
+        dimNames = []
+
+    possibleFactorVars = _latNames + ['lev', 'ilev']
     factorVars = {}
     matchingDims = []
+    dimsToAvgOver = tuple()
 
     for dimName in dimNames:
         try:
@@ -289,23 +298,78 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
         if dimName in possibleFactorVars:
             factorVars[dimInd] = dimName
 
+    if landWeight and ('lat' not in dimsToAvgOver or 'lon' not in dimsToAvgOver):
+        log('Not averaging over both latitude and longitude, so it does not make sense to apply land fraction weighting. avgOverDims will ignore landWeight = True argument.')
+        landWeight = False
+
     if landWeight:
         try:
-            latDim = actualDimNames.index('lat') # TODO Allow for CLM and other input, where lat/lon are named differently
+            latDim = actualDimNames.index('lat') # Must be lat/lon in particular (rather than other things in _latNames, for example) since those are the dimensions of landfrac and LANDFRAC
             lonDim = actualDimNames.index('lon')
         except ValueError:
             log('Unable to apply land weighting because one of lat and lon are not dimensions of the provided variable', 'warning')
         lastDim = max(latDim, lonDim) # So that empty dims are added after the LANDFRAC mask
-        factorVars[lastDim] = 'LANDFRAC'
+        if '.clm2.' in dataFile:
+            factorVars[lastDim] = 'landfrac'
+        else:
+            factorVars[lastDim] = 'LANDFRAC' # This is the cam variable. getNcVar() will fetch related CAM data if dataFile is not CAM data itself
 
     log(f'avgOverDims found the following dimensions to average over: {matchingDims}', 'debug')
     log(f'A weighted average will be taken over {factorVars}', 'debug')
 
-    weights = getFromCamDummy(raw.shape, factorVars)
+    weights = getWeights(dataFile, raw.shape, factorVars)
     raw *= weights
 
-    averagedArr = np.nanmean(raw[:], axis=dimsToAvgOver)
+    if dimsToAvgOver:
+        averagedArr = np.nanmean(raw, axis=dimsToAvgOver)
+    else: # If no matching dims found, will not perform a mean
+        averagedArr = raw
 
     averagedArr = np.squeeze(averagedArr)
 
     return averagedArr
+
+def avgOverTime(varName:str, outputRoot:str, archive:bool = True, component:str = 'cam', fileHVal:str|None = None, year:list[str]|None=None, month:list[str]|None=None, day:list[str]|None=None, second:list[str]|None=None, averageDimNames:list[str]|None=None, landWeight=True) -> tuple[_ndarray, int]:
+    """
+    Uses getPaths() to find paths corresponding to a time period and avgOverDims() to get data for each of them, then takes an average. All the inputs to this function match with the inputs of those functions.
+
+    :param varName: The variable to be averaged. Must be included as a variable in fPath.
+    :type varName: str
+    :param outputRoot: A directory with CESM output. Often of the form "/scratch/$USER/cesm/output/archive/$CASE" or, occasionally, "/scratch/$USER/cesm/output/$CASE/run".
+    :type outputRoot: str
+    :param archive: Whether or not outputRoot leads to an archive directory, which things like lnd/hist subdirectories contain the actual data. If True, assumes that directory structure, and looks for output files accordingly. If False, assumes all data is in outputRoot, and does not do any recursive searching.
+    :type archive: bool, optional
+    :param component: A string representing the model component to retrieve data from. Commonly will be 'cam', 'clm2', or maybe 'mosart' or 'pop'.
+    :type component: str, optional
+    :param fileHVal: Which of the (at most 10) output files for this component to search for. Typically '0', maybe '1', occasionally '2'-'9'. Default is None, which will grab all data.
+    :type fileHVal: str or None, optional
+    :param year: A list of strings representing the years from which to get output. Each string must have four numerical characters (e.g. '0001') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
+    :type year: list[str] or None, optional
+    :param month: A list of strings representing the months from which to get output. Each string must have two numerical characters (e.g. '01') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
+    :type month: list[str] or None, optional
+    :param day: A list of strings representing the days from which to get output. Each string must have two numerical characters (e.g. '01') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
+    :type day: list[str] or None, optional
+    :param second: A list of strings representing the seconds from which to get output. Each string must have five numerical characters (e.g. '000000') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
+    :type second: list[str] or None, optional
+    :param dimNames: A list of strings. If any of the strings matches the name of a dimension of ncVar, that dimension will be averaged across. If an element of dimNames is not a dimension of ncVar, it will be silently skipped. By default, does not take any averages.
+    :type dimNames: list[str] or None, optional
+    :param landWeight: A boolean determining whether or not to weight the average by the amount of land in each grid cell. Default is True, so the average will be weighted.
+    :type landWeight: bool, optional
+
+    :return: Numpy array with data averaged and flattened across the specified dimension(s)
+    :rtype: np.ndarray
+    """
+    paths = getPaths(outputRoot, archive, component, fileHVal, year, month, day, second)
+
+    if not paths:
+        raise FileNotFoundError(f'Unable to find {component} data to average over in {outputRoot}')
+
+    out = avgOverDims(paths[0], varName, averageDimNames, landWeight)
+    if len(paths) == 1:
+        return out
+
+    for path in paths[1:]:
+        out += avgOverDims(path, varName, averageDimNames, landWeight)
+    out /= len(paths)
+
+    return out

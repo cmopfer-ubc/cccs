@@ -41,7 +41,7 @@ def fsurdat_checkValid(path:str, tol:float = 1e-5):
         log(f'File {path} has invalid PCT_NAT_PFT, with one point having total PCT_NAT_PFT off by {PCT_NAT_PFT_maxErr} from 100.')
         return False
 
-def confirmSuccess(inPath:str, outPath:str, diffPath:str|None = None):
+def confirmDiff(inPath:str, outPath:str, diffPath:str|None = None):
     """
     After running ncdiff on an original copy and a modified version of the fsurdat file, this summarizes the total modified elements.
 
@@ -123,7 +123,7 @@ def modify_PCT_NAT_PFT(inPath:str, outPath:str, modificationDict:dict|None = Non
 
     log('Checking output file is valid to use as fsurdat, and is different from the input')
     fsurdat_checkValid(inPath)
-    confirmSuccess(inPath, outPath)
+    confirmDiff(inPath, outPath)
 
 def smartDeforestation(inPath:str, outPath:str, grassFracs:_ndarray|None = None, latLonRatio:float|int = 3):
     """
@@ -155,13 +155,14 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:_ndarray|None = None,
 
         if grassFracs is None:
             log('Getting ratios between grass PFTs')
-            grasses = np.zeros((len(_grassIds), PCT_NAT_PFT.shape[1], PCT_NAT_PFT.shape[2]))
-            for i, grassId in enumerate(_grassIds):
-                grasses[i] = PCT_NAT_PFT[grassId][:]
+            grassMask = [False] * PCT_NAT_PFT.shape[0]
+            for grassId in _grassIds:
+                grassMask[grassId] = True
+            grasses = PCT_NAT_PFT[grassMask]
 
             grassTot = np.sum(grasses, axis=0)
             grassless = grassTot == 0
-            grassTot[grassless] = np.nan
+            grassTot[grassless] = np.nan # Avoid divide by error. Nans will propagate through and be handled by interpolation later
 
             grassFracs = grasses/grassTot
 
@@ -172,30 +173,33 @@ def smartDeforestation(inPath:str, outPath:str, grassFracs:_ndarray|None = None,
             cols = indices[1].flatten() * latLonRatio # Correspons to longitude, hence multiplied by ratio
             indices = np.column_stack((rows, cols))
 
-            indeces_noNans = indices[~grassless.flatten()]
-            grassFracs_noNans = grassFracs[:, ~grassless].T
+            indeces_noNans = indices[~grassless.flatten()] # Tells interpolation the distance between points
+            grassFracs_noNans = grassFracs[:, ~grassless].T # Tells interpolation the value at points
 
-            interpolator = NearestNDInterpolator(indeces_noNans, grassFracs_noNans)
+            grassInterpolator = NearestNDInterpolator(indeces_noNans, grassFracs_noNans)
 
             indeces_nans = indices[grassless.flatten()]
-            grassFracs[:, grassless] = interpolator(indeces_nans).T
+            grassFracs[:, grassless] = grassInterpolator(indeces_nans).T
 
         log('Finding total percent forest PFT by location')
-        forestTot = np.zeros((PCT_NAT_PFT.shape[1], PCT_NAT_PFT.shape[2]))
+        woodedMask = [False] * PCT_NAT_PFT.shape[0]
         for woodedId in _forestIds + _shrubIds: # If wanting to change only forest or only shrub, this would be the line to change
-            forestTot += PCT_NAT_PFT[woodedId][:]
-            PCT_NAT_PFT[woodedId][:] = 0
+            woodedMask[woodedId] = True
+
+        forestTot = np.sum(PCT_NAT_PFT[woodedMask], axis=0)
+        PCT_NAT_PFT[woodedMask] = 0
 
         log('Applying new grass percentages')
-        for j, grassId in enumerate(_grassIds):
-            grassModifier = forestTot * grassFracs[j]
-            PCT_NAT_PFT[grassId][:] += grassModifier
+        # Could make this more vectorized by making a version of grassFracs that matches PCT_NAT_PFT's shape, with 0's for all non-grass PFTs. But that's less readable and uses extra memory. This runs fast enough for most conceivable use cases anyways.
+        for i, grassId in enumerate(_grassIds):
+            grassModifier = forestTot * grassFracs[i]
+            PCT_NAT_PFT[grassId] += grassModifier
 
         data.variables['PCT_NAT_PFT'][:] = PCT_NAT_PFT
 
     log('Checking output file is valid to use as fsurdat, and is different from the input')
     fsurdat_checkValid(inPath)
-    confirmSuccess(inPath, outPath)
+    confirmDiff(inPath, outPath)
 
 ### SOM Forcing ###
 
@@ -212,6 +216,7 @@ def som_meanHeatFlux(path:str) -> float:
     import netCDF4 as nc
 
     with nc.Dataset(path, 'r') as ds:
+        # Read in raw data as np ndarray (get rid of default masking)
         a = np.array(ds.variables['area'][:]) #rad^2 Surface area of each cell
         q = np.array(ds.variables['qdp'][:]) #Wm^-2 Heat flux convergence (net heat flux) of each cell
 
@@ -241,7 +246,7 @@ def som_correctHeatFlux(inPath:str, q_bar:float, outPath:str|None = None) -> str
     if outPath is None:
         outPath = inPath[:-2] + 'corrected.nc'
 
-    shutil.copy2(inPath, outPath) # NOTE From some non-rigorous testing, this requires the original file to not be currently open. The use of "with" in meanHeatFlux() and any other Python scripts, and avoiding opening the file in a notebook, should allow this copy function to work as intended.
+    shutil.copy2(inPath, outPath) # NOTE From some non-rigorous testing, this requires the original file to not be currently open. The use of "with" or "close" in meanHeatFlux() and any other Python scripts, and avoiding opening the file in a notebook, should allow this copy function to work as intended.
 
     with nc.Dataset(outPath, 'r') as ds:
         if ds.variables is None:

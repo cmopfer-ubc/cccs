@@ -42,6 +42,8 @@ def createLogger(logFile:str|None = None, loggerName:str = __name__, propagatedL
     # Log to terminal (a stream to sys.stderr)
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
+    if logFile is None:
+        ch.setLevel(logging.DEBUG)
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
@@ -72,7 +74,7 @@ def createLogger(logFile:str|None = None, loggerName:str = __name__, propagatedL
         logger.error('Uncaught Exception:', exc_info=(excType, excValue, excTraceback))
     sys.excepthook = logException
 
-    # Propagate the other package's loggers to this new logger
+    # Propagate other packages' loggers to this new logger
     def propagateLogger(loggerName):
         """
         Checks if the fh and ch handlers are already used by the provided logger and, if not, adds them.
@@ -128,8 +130,8 @@ def log(message:str|Exception, logLevel:int|str=_INFO, loggerName:str=__name__):
 
     if isinstance(logLevel, str):
         try:
-            logLevelTranslator = {'debug':logging.DEBUG, 'info':logging.INFO, 'warning':logging.WARNING, 'error':logging.ERROR, 'critical':logging.CRITICAL}
-            logLevel = logLevelTranslator[logLevel.lower()]
+            strToLogLevel = {'debug':logging.DEBUG, 'info':logging.INFO, 'warning':logging.WARNING, 'error':logging.ERROR, 'critical':logging.CRITICAL}
+            logLevel = strToLogLevel[logLevel.lower()]
         except KeyError:
             logger.log(level = logging.WARNING, msg = f'Invalid log level "{logLevel}". Will default to info.')
             logLevel = logging.INFO
