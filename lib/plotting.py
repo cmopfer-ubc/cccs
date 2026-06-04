@@ -1,13 +1,17 @@
 """
 Created: Camden Opfer, March 2026
+Modified: Camden Opfer, May 2026
 
-A bunch of plotting functions for input and output files related to CESM
+A bunch of plotting functions mostly relevant to input and output files related to CESM
 """
 # Imports for typing
+from typing import Any
 from numpy import ndarray as _ndarray
 from matplotlib.axis import Axis as _Axis
 from cartopy.mpl.geoaxes import GeoAxes as _GeoAxes
 from matplotlib.figure import Figure as _Figure
+
+## Plotting Utitlities ##
 
 def saveFig(fig:_Figure, savePath:str, saveDpi:int|float|None = 200):
     """
@@ -21,6 +25,7 @@ def saveFig(fig:_Figure, savePath:str, saveDpi:int|float|None = 200):
     :type saveDpi: int or float or None, optional
     """
     import os
+    import warnings
 
     if saveDpi is None:
         saveDpi = 'figure'
@@ -30,91 +35,232 @@ def saveFig(fig:_Figure, savePath:str, saveDpi:int|float|None = 200):
     saveDir = os.path.dirname(savePath)
     if saveDir:
         os.makedirs(saveDir, exist_ok=True)
-    fig.savefig(savePath, bbox_inches='tight', dpi=saveDpi)
-    # plt.close(fig)
+    try:
+        fig.savefig(savePath, bbox_inches='tight', dpi=saveDpi)
+    except Exception as e:
+        import datetime
+        timestamp = datetime.datetime.now().timestamp()
+        fallbackPath = f'BACKUP-DOWNLOAD-{timestamp}.png'
 
-def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, cbarType:str = 'linear', cmap:str|None = None, vlims:list|None = None, contourIntervals:int = 100, percentExcluded:int|float = 0, ax:_Axis|_GeoAxes|None = None, returnAx:bool = False, savePath:str|None = None):
+        warnings.warn(f'fig.savefig() failed with error {e}. To avoid lost work, will attempt to save figure to fallback path: {fallbackPath}')
+        fig.savefig('', bbox_inches='tight', dpi=200)
+
+def ensureAxis(ax:_Axis|_GeoAxes|None = None, wantGeoAxes:bool = False, projection:Any = None) -> tuple[_Figure, _Axis|_GeoAxes]:
+    """
+    Checks if ax is an Axis object (or GeoAxes object if specified), and returns it if satisfied. If not, either replaces the ax object with the correct type (switching Axis to GeoAxes or GeoAxes to Axis) or creates a new figure and axis.
+
+    :param ax: The axis object to check. Default is None, in which case a new figure and axis is created.
+    :type ax: Axis or GeoAxes or None, optional
+    :param wantGeoAxes: Specifies whether the desired return of the function should contain a GeoAxes (True) or Axis (False) object. Default is False, which will lead to a regular Axis object.
+    :type wantGeoAxes: bool, optional
+    :param projection: The projection to be used by the GeoAxes object, if applicable. Something like cartopy.crs.PlateCarre(). Default is None, which leaves the projection unspecified. Must be provided if wantGeoAxes is True.
+    :type projection: Any, optional
+
+    :return: The figure and axis objects associated with the (potentially new) axis
+    :rtype: tuple[Figure, Axis or GeoAxes]
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.layout_engine import ConstrainedLayoutEngine, TightLayoutEngine
+
+    if wantGeoAxes and projection is None:
+        raise ValueError('When wantGeoAxis is True, projection must be provided to ensureAxis(), but got projection=None.')
+
+    if ax is None:
+        if wantGeoAxes:
+            fig, outAx = plt.subplots(1, 1, subplot_kw={'projection':projection})
+        else:
+            fig, outAx = plt.subplots(1, 1)
+        return fig, outAx
+
+    fig = ax.figure
+
+    if (isinstance(ax, _Axis) and not wantGeoAxes) or (isinstance(ax, _GeoAxes) and wantGeoAxes):
+        return fig, ax
+
+    # NOTE The following block may not be necessary? The layoutengine is preserved since it's a figure property?
+    # Take note of what layout to use when adding the GeoAxes.
+    layoutEngine = fig.get_layout_engine()
+    constrained = isinstance(layoutEngine, ConstrainedLayoutEngine)
+    tight = isinstance(layoutEngine, TightLayoutEngine)
+
+    pos = ax.get_position() # Position the old axis had, so that the new one will replace it
+    fig.delaxes(ax)
+
+    if wantGeoAxes:
+        outAx = fig.add_axes(pos, projection=projection)
+    else:
+        outAx = fig.add_axes(pos)
+
+    # NOTE Again, from above, it seems that layout engine is preserved?
+    # Re-apply layout stored earlier
+    if constrained:
+        fig.set_constrained_layout(True)
+    elif tight:
+        fig.tight_layout()
+    return fig, outAx
+
+def yAxisPressure(ax:_Axis|_GeoAxes, ydata:_ndarray, pMin:int|float = 300) -> _Axis|_GeoAxes:
+    """
+    Sets up the y axis of a plot to represent pressure by having it go from large to small values, using a log scale, and having useful tick values.
+
+    :param ax: The axis to setup the y axis of
+    :type ax: Axis or GeoAxes
+    :param ydata: The pressure data to be plotted, used to define the plot limits.
+    :type ydata: ndarray
+    :param pMin: The minimum pressure value (visually, the highest level) to plot on the graph. Default is 300, which is usually reasonable assuming units are hPa.
+    :type pMin: int or float, optional
+
+    :return: The edited axis object. The type will match the input ax object since it is the same object.
+    :rtype: Axis or GeoAxes
+    """
+    import numpy as np
+    from matplotlib.ticker import StrMethodFormatter, NullFormatter
+
+    ax.yaxis.set_inverted(True)
+    ax.set_yscale('log')
+
+    pMax = np.nanmax(ydata)
+    yTicks = np.logspace(np.log10(pMax-10), np.log10(pMin+10), 6)
+    yTicks = np.round(yTicks / 10) * 10
+
+    ax.set_ylim(bottom=pMax, top=pMin)
+
+    ax.set_yticks(yTicks)
+    ax.tick_params(axis='y', which='minor', left=False)
+    ax.yaxis.set_major_formatter(StrMethodFormatter('{x:.0f}'))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+
+    return ax
+
+def cbarTicks(dataMin:float|int, dataMax:float|int, logAx:bool = False) -> tuple[list|_ndarray, list[str]]:
+    """
+    Creates lists of reasonable tick and tick label values to be fed to the cbarObject.set_ticks() method.
+    
+    Note that, for a diverging colorbar, dataMax and dataMin should be +/-halfRange respectively.
+
+    :param dataMin: The value to be used for the minimum tick.
+    :type dataMin: float or int
+    :param dataMin: The value to be used for the maximum tick.
+    :type dataMin: float or int
+    :param logAx: Indicates whether the colorbar will have a log axis (True) or a linear one (False). Default is False, representing a linear dataset.
+    :type logAx: bool, optional
+
+    :return: A tuple with the ticks (list or array of numerical values representing expected tick locations) and their labels (a list of strings of the same length which nicely formats the values in a consistent way).
+    :rtype: tuple[list or _ndarray, list[str]]
+    """
+    from math import ceil, log10
+    import numpy as np
+
+    def scientificNotation(floats:_ndarray) -> list[str]:
+        exponents = np.astype(np.floor(np.log10(np.abs(floats))), int)
+        coefficients = floats/(10.**exponents)
+        sciNot = [rf'${coefficient:#.2f} \cdot 10^{{{exponent}}}$' for exponent, coefficient in zip(exponents, coefficients)]
+        return sciNot
+
+    if logAx:
+        powers = list(range(ceil(log10(dataMin)), ceil(log10(dataMax))))
+        if len(powers) >= 3:
+            ticks = [10**power for power in powers]
+            tickLabels = [f'$10^{{{power}}}$' for power in powers]
+        else:
+            ticks = np.logspace(log10(dataMin), log10(dataMax), 8, base=10)
+            tickLabels = scientificNotation(ticks)
+
+        return ticks, tickLabels
+
+    # If linear ax (logAx didn't trigger the above return statement)...
+    ticks = np.linspace(dataMin, dataMax,8)
+
+    exponents = np.astype(np.floor(np.log10(np.abs(ticks))), int)
+    bestAsFloat = np.sum(np.logical_or(exponents > -2, exponents < 3))
+    if bestAsFloat >= 7: # All (or all but one) best notated as floats
+        tickLabels = [f'{tick:#.3g}' for tick in ticks]
+    elif bestAsFloat <= 1: # All (or all but one) best notated as exponentials
+        tickLabels = scientificNotation(ticks)
+    else: # Use a mixture of floats and exponentials
+        tickLabels = []
+        for exponent, tick in zip(exponents, ticks):
+            if exponent < -1 or exponent > 2:
+                tickLabels += scientificNotation(tick)
+            else:
+                tickLabels += [f'{tick:#.3g}']
+
+    return ticks, tickLabels
+
+
+## Functions That Make Full Plots ##
+
+def atmCrossSection(data:_ndarray, xdim:_ndarray, ydim:_ndarray, title:str, dataLabel:str, xLabel:str = None, yLabel:str = None, globalMap:bool = True, yIsPressure:bool = False, cbarType:str = 'linear', cmap:str|None = None, vlims:list|None = None, pMin:int|float = 300, contourIntervals:int = 30, ax:_Axis|_GeoAxes|None = None, savePath:str|None = None) -> _Axis|_GeoAxes|None:
     """
     A very flexible function to plot colormaps over a global map with an outline of the continents.
 
     :param data: The data to plot on the grid.
-    :type data: np.ndarray
-    :param long: The array of longitude values to plot over. Must have the same shape as data.
-    :type long: np.ndarray
-    :param lat: The array of longitude values to plot over. Must have the same shape as data.
-    :type lat: np.ndarray
+    :type data: ndarray
+    :param xdim: The array of x values the data should be plotted over. If globalMap is True, this should be longitude. Otherwise, it should likely be latitude or longitude.
+    :type xdim: ndarray
+    :param ydim: The array of y values the data should be plotted over. If globalMap is True, this should be latitude. Otherwise, it should likely be pressure.
+    :type ydim: ndarray
     :param title: The title to display on the plot.
     :type title: str
-    :param units: The units by which the colorbar will be labelled
-    :type units: str
+    :param dataLabel: The units by which the colorbar will be labelled, corresponding to the units of data.
+    :type dataLabel: str
+    :param xLabel: The units by which the x axis will be labelled, corresponding to the units of xdim. Will be ignored if globalMap is True, since then it is evident that the x axis is longitude. Default is None, so there will be no label.
+    :type xLabel: str, optional
+    :param yLabel: The units by which the y axis will be labelled, corresponding to the units of ydim. Will be ignored if globalMap is True, since then it is evident that the y axis is latitude. Default is None, so there will be no label.
+    :type yLabel: str, optional
+    :param globalMap: Indicates whether this is a global map (True), in which case data will be plotted against a background showing the continental boundaries, with ticks and labels indicating latitude and longidute. Default is True
+    :type globalMap: bool, optional
+    :param yIsPressure: Indicates whether the y axis of the plot represents pressure (True) or not (False). If True, inverts the axis, makes it log scale, and makes more readable ticks.
+    :type yIsPressure: bool, optional
     :param cbarType: The choice of colorbar scaling. Must be 'linear', 'log', or 'diverging'.
-    :type cbarType: str
+    :type cbarType: str, optional
     :param cmap: The colormap option to retrieve by plt.get_cmap(cmap). Therefore, must be available with the version of matplotlib being used. Default depends on cbarType.
     :type cmap: str or None, optional
     :param vlims: List containing the minimum and maximum values for the colorbar contours to reach. Default is to calculate this based on percentExcluded.
     :type vlims: list or None, optional
+    :param pMin: When yIsPressure is True, this argument determines the minimum y value plotted. Default is 300, which is reasonable for plotting things in hPa in the troposphere.
+    :type pMin: int or float, optional
     :param contourIntervals: Number of increments at which to evaluate the colormap. A greater value leads to smoother, more pleasing visuals. Default is 100.
     :type contourIntervals: int, optional
-    :param percentExcluded: The percentage of data to exclude from both the top and bottom of data's distribution when creating the colorbar. This avoids having a minimum (maximum )value of the colorbar far less (greater) than the majority of the data, washing out the visuals. Default is 0.
-    :type percentExcluded: int or float, optional
-    :param ax: An axis or axis-like object to use as a reference for the plot. If this is a GeoAxes object, the plot will be made directly on it. Otherwise, the related figure object and position of ax will be used to create a new GeoAxes object. Default is None, in which case a new figure and axis are created.
-    :type ax: matplotlib.axis.Axis or cartopy.mpl.geoaxes.GeoAxes or None, optional
-    :param returnAx: Determines whether to (when False) save the figure as an image or (when True) return the ax object the map is drawn on. When true, typical usage may look like fig,axs=plt.subplots(2,2); axs[0,0]=globalMap(...,ax=axs[0,0],returnAx=True).
-    :type returnAx: bool, optional
-    :param savePath: The file to which the resulting figure will be saved. Default is the working directory
+    :param ax: An axis or axis-like object to use as a reference for the plot. If the wrong type (e.g. an Axis object, but globalMap is True), will be replaced in place (within the figure) by a correct axis object. When this argument is not None, the final axis object will be returned rather than saving the figure and clearing it. Default is None, in which case a new figure and axis are created.
+    :type ax: Axis or GeoAxes or None, optional
+    :param savePath: The file to which the resulting figure will be saved. Default is the working directory. The figure is only saved out if ax is None, otherwise an axis object is, instead, returned.
     :type savePath: str or None, optional
 
-    :return: Default is to return None. When returnAx is True, returns a cartopy.mpl.geoaxes.GeoAxes object with the map drawn on it.
-    :rtype: None or cartopy.mpl.geoaxes.GeoAxes
+    :return: Default is to return None. When returnAx is True, returns a GeoAxes object with the map drawn on it.
+    :rtype: None or GeoAxes
     :raises ValueError: Raised when cbarType is not a valid option ('linear', 'log', or 'diverging')
     """
     import warnings
-    from math import ceil
     import numpy as np
     import matplotlib.pyplot as plt
     import matplotlib.colors as colors
-    from matplotlib.layout_engine import ConstrainedLayoutEngine, TightLayoutEngine
     import cartopy.crs as ccrs
     import cartopy.feature as cfeature
 
-    plotData = np.ma.MaskedArray(data, mask=np.isnan(data))
+    if globalMap and yIsPressure:
+        raise ValueError('Invalid combination of arguments to atmCrossSection(). Only one of globalMap and yIsPressure can be True, but both provided values were True.')
 
-    nonNanData = plotData[~np.isnan(plotData)] # Not taken from something like plotData[plotData.mask since there might be no mask
-    if np.all(nonNanData == nonNanData[0]):
+    try:
+        mask = np.logical_or(data.mask, np.isnan(data))
+    except AttributeError: # data is not a masked array, and doesn't have a data.mask attribute
+        mask = np.isnan(data)
+
+    plotData = np.ma.MaskedArray(data, mask=mask)
+
+    validData = plotData[~plotData.mask]
+    if np.all(validData == validData[0]):
         warnings.warn('Input data for globalMap contains one uniform value, so colorbar could not spread colormap across range. Will not create plot.', UserWarning)
-        return # Return without plotting because continuing leads to a very cryptic error raised by ax.colorbar's call to pcolormesh
+        return ax # Return without plotting because continuing leads to a very cryptic error raised by ax.colorbar's call to pcolormesh
 
-    if ax is None:
-        # ccrsProj = ccrs.RotatedPole(140, 70) # Format is (lon, lat). Useful for regional plots, where the projection can be centred over the data. This value corresponds with Greenland as an example
-        ccrsProj = ccrs.PlateCarree()
-        fig, plotAx = plt.subplots(1, 1, subplot_kw={'projection':ccrsProj})
-    elif isinstance(ax, _GeoAxes):
-        plotAx = ax
-        fig = ax.figure
+    if globalMap:
+        projection = ccrs.PlateCarree()
     else:
-        fig = ax.figure
+        projection = None
+    fig, plotAx = ensureAxis(ax, globalMap, projection)
 
-        # NOTE The following block may not be necessary? The layoutengine is preserved?
-        # Take note of what layout to use when adding the GeoAxes.
-        layout = None
-        layoutEngine = fig.get_layout_engine()
-        if isinstance(layoutEngine, ConstrainedLayoutEngine):
-            layout = 'constrained'
-        if isinstance(layoutEngine, TightLayoutEngine):
-            layout = 'tight'
-
-        pos = ax.get_position() # Position the old axis had, so that the new one will replace it
-        fig.delaxes(ax)
-
-        ccrsProj = ccrs.PlateCarree()
-        plotAx = fig.add_axes(pos, projection=ccrsProj)
-
-        # NOTE Again, from above, it seems that layout engine is preserved?
-        # Re-apply layout stored earlier
-        if layout == 'constrained':
-            fig.set_constrained_layout(True)
-        elif layout == 'tight':
-            fig.tight_layout()
+    if yIsPressure:
+        plotAx = yAxisPressure(plotAx, ydim, pMin)
 
     if cbarType == 'linear':
         if cmap is None:
@@ -125,13 +271,12 @@ def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, 
         cmap = plt.get_cmap(cmap)
 
         if vlims is None:
-            vlims = np.nanpercentile(plotData, [percentExcluded, 100-percentExcluded])
+            vlims = np.nanpercentile(plotData, [0, 100])
 
-            # contourLevels = np.nanpercentile(data, np.linspace(percentExcluded, 100-percentExcluded, contourIntervals)) # This "cheats" by stretching/compressing the colorbar to match where there are more/less points
         contourLevels = np.linspace(vlims[0], vlims[1], contourIntervals)
 
         # Define distribution of colors in cmap across data range
-        bottomExtend = contourLevels[0] * ((1-1e-5)) > np.nanmin(plotData) # True when data is smaller than vmin by more than 0.001%
+        bottomExtend = contourLevels[0] * (1-1e-5) > np.nanmin(plotData) # True when data is smaller than vmin by more than 0.001%
         topExtend = contourLevels[-1] * (1+1e-5) < np.nanmax(plotData) # True when data is greater than vmax by more than 0.001%
 
         if bottomExtend and topExtend:
@@ -143,44 +288,19 @@ def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, 
         else:
             norm = colors.BoundaryNorm(contourLevels, cmap.N, extend='neither')
 
-        ticks = np.linspace(contourLevels[0], contourLevels[-1],8)
-
-        # Make ticklabels coherent in choice of decimal or scientific notation if possible
-        exponents = np.floor(np.log10(np.abs(ticks))).astype(int)
-        if np.sum(np.logical_or(exponents < -1, exponents > 2)) < 2: # All (or all but one) best notated as floats
-            tickLabels = [f'{tickLocation:#.3g}'.strip('.') for tickLocation in ticks]
-        else:
-            coefficients = ticks/(10.**exponents)
-            tickLabels = []
-            if np.sum(np.logical_and(exponents > -1, exponents < 2)) < 2: # All (or all but one) best notated as exponentials
-                tickLabels = [rf'${coefficient:#.2f} \cdot 10^{{{exponent}}}$' for coefficient, exponent in zip(coefficients, exponents)]
-            else: # Mixture of floats and exponentials needed
-                for coefficient, exponent, tickLocation in zip(coefficients, exponents, ticks):
-                    if exponent < -1 or exponent > 2:
-                        tickLabels += [rf'${coefficient:#.2f} \cdot 10^{{{exponent}}}$']
-                    else:
-                        tickLabels += [f'{tickLocation:#.3g}'.strip('.')]
+        dataMin, dataMax = contourLevels[0], contourLevels[-1]
 
     elif cbarType == 'log':
         if cmap is None:
             cmap = 'inferno'
 
         if vlims is None:
-            vlims = tuple(i for i in np.nanpercentile(plotData, [percentExcluded, 100-percentExcluded]))
+            vlims = tuple(i for i in np.nanpercentile(plotData, [0, 100]))
         contourLevels = np.logspace(np.log10(vlims[0]), np.log10(vlims[1]), contourIntervals, base=10)
 
         norm = colors.LogNorm(vlims[0], vlims[1])
 
-        # Define location of ticks for colorbar
-        powers = list(range(ceil(np.log10(contourLevels[0])), ceil(np.log10(contourLevels[-1]))))
-        if len(powers) >= 2:
-            ticks = [10**power for power in powers]
-            tickLabels = [f'$10^{{{power}}}$' for power in powers]
-        else:
-            ticks = np.logspace(np.log10(contourLevels[0]), np.log10(contourLevels[-1]), 8, base=10)
-            exponents = np.floor(np.log10(np.abs(ticks))).astype(int)
-            coefficients = ticks/(10.**exponents)
-            tickLabels = [rf'${coefficient:#.2f} \cdot 10^{{{exponent}}}$' for exponent, coefficient in zip(exponents, coefficients)]
+        dataMin, dataMax = contourLevels[0], contourLevels[-1]
 
     elif cbarType == 'diverging':
         if vlims is not None:
@@ -189,68 +309,66 @@ def globalMap(data:_ndarray, long:_ndarray, lat:_ndarray, title:str, units:str, 
         if cmap is None:
             cmap = 'seismic'
 
-        halfRange = np.nanmax(np.abs(np.nanpercentile(plotData, [percentExcluded, 100-percentExcluded])))
+        halfRange = np.nanmax(np.abs(np.nanpercentile(plotData, [0, 100])))
         norm = colors.CenteredNorm(halfrange=halfRange)
 
-        ticks = np.linspace(-halfRange, halfRange,8)
-
-        # Make ticklabels coherent in choice of decimal or scientific notation if possible
-        exponents = np.floor(np.log10(np.abs(ticks))).astype(int)
-        if np.sum(np.logical_or(exponents < -1, exponents > 2)) < 2: # All (or all but one) best notated as floats
-            tickLabels = [f'{tickLocation:#.3g}'.strip('.') for tickLocation in ticks]
-        else:
-            coefficients = ticks/(10.**exponents)
-            tickLabels = []
-            if np.sum(np.logical_and(exponents > -1, exponents < 2)) < 2: # All (or all but one) best notated as exponentials
-                tickLabels = [rf'${coefficient:#.2f} \cdot 10^{{{exponent}}}$' for coefficient, exponent in zip(coefficients, exponents)]
-            else: # Mixture of floats and exponentials needed
-                for coefficient, exponent, tickLocation in zip(coefficients, exponents, ticks):
-                    if exponent < -1 or exponent > 2:
-                        tickLabels += [rf'${coefficient:#.2f} \cdot 10^{{{exponent}}}$']
-                    else:
-                        tickLabels += [f'{tickLocation:#.3g}'.strip('.')]
+        dataMin, dataMax = -halfRange, halfRange
 
     else:
         raise ValueError(f"Invalid cbarType option {cbarType} in greenlandPlotter. Must be one of 'linear', 'log', or 'diverging'")
 
-    contour = plotAx.pcolormesh(long, lat, plotData, transform=ccrs.PlateCarree(), cmap=cmap, norm=norm)
+    contour = plotAx.pcolormesh(xdim, ydim, plotData, transform=projection, cmap=cmap, norm=norm)
 
     # Create and nice-ify colorbar
     colorbar = fig.colorbar(contour, norm=norm, spacing='proportional', pad=0.1)
-    colorbar.set_ticks(ticks, labels=tickLabels)
-    colorbar.minorticks_off()
-    colorbar.set_label(units)
 
+    ticks, tickLabels = cbarTicks(dataMin, dataMax, cbarType == 'log')
+    colorbar.set_ticks(ticks, labels=tickLabels)
+
+    colorbar.minorticks_off()
+    colorbar.set_label(dataLabel)
+
+    # General beauty and labelling
     plotAx.set_title(title)
 
-    # # Center on region
-    # bounds = [-63, -23, 59, 84] # Format is [lon_min, lon_max, lat_min, lat_max]. These correspond to Greenland, as an example
-    # ax.set_extent(bounds, crs=ccrs.PlateCarree())
-    # ax.set_aspect(1.8) # Useful to match the aspect of the bounds. Again, this corresponds to Greenland
+    if globalMap:
+        plotAx.gridlines(draw_labels=True, dms=True, x_inline=False, y_inline=False)
+        plotAx.coastlines(resolution='110m') # Options are 110, 50, or 10m. For a global map, higher resolution is less useful
+        plotAx.add_feature(cfeature.LAND, edgecolor='none', facecolor='dimgray')
+    else:
+        plotAx.set_xlabel(xLabel)
+        plotAx.set_ylabel(yLabel)
 
-    plotAx.gridlines(draw_labels=True, dms=True, x_inline=False, y_inline=False)
-
-    # Outline coasts, fill in continents
-    plotAx.coastlines(resolution='110m') # Options are 110, 50, or 10m. For a global map, higher resolution is less useful
-    plotAx.add_feature(cfeature.LAND, edgecolor='none', facecolor='dimgray')
-
-    if returnAx:
-        # This means the code below will not run, so the fig will stay open. This is necessary for the user to do anything helpful with the axis outside this function
+    # Either return the axis or save and clear the figure
+    if ax is not None:
         return plotAx
 
-    # Save and clear figure
     saveFig(fig, savePath, saveDpi = 200)
     plt.close(fig)
 
-def profiles(pressure:_ndarray, data:list[_ndarray], title:str, xLabel:str, dataLabels:list[str]|None = None, diffs:bool = True, pMin = 300, savePath:str|None = None):
+def profiles(pressure:_ndarray, data:list[_ndarray], savePath:str, title:str, xLabel:str, dataLabels:list[str]|None = None, diffs:bool = True, pMin = 300):
     """
-    Plots vertical profiles of data against pressure.
+    Plots vertical profiles of data (represented by the x axis) against pressure (represented by the y axis). Optionally, also plots differences between elements 1 on of data against element 0 of data.
 
-    TODO Parameter/type annotations
+    :param pressure: The pressure values to plot over.
+    :type pressure: ndarray
+    :param data: The profile(s) of data to plot over. Each element of data should be an array matching the shape of pressure.
+    :type data: list[ndarray]
+    :param savePath: The file to which the resulting figure will be saved.
+    :type savePath: str or None, optional
+    :param title: The title to display on the plot.
+    :type title: str
+    :param xLabel: The label to show on the x axis, which should correspond to the units of data (not pressure).
+    :type xLabel: str
+    :param dataLabels: Labels corresponding to the arrays within data to be used by the legend. This list should, therefore, be of the same length as data. Default is None, in which case no legend is created.
+    :type dataLabels: list[str] or None, optional
+    :param diffs: Determines whether to plot the difference between elements 1 on of data against element 0 of data (True) or to plot only the raw data (False). The differences are displayed on a second axis of the same figure.
+    :type diffs: bool, optional
+    :param pMin: Determines the minimum y value plotted. Default is 300, which is reasonable for plotting things in hPa in the troposphere.
+    :type pMin: int or float, optional
     """
     import numpy as np
     import matplotlib.pyplot as plt
-    from matplotlib.ticker import StrMethodFormatter, NullFormatter
 
     pMax = np.max(pressure)
 
@@ -265,25 +383,18 @@ def profiles(pressure:_ndarray, data:list[_ndarray], title:str, xLabel:str, data
     ticks = np.logspace(np.log10(pMax-10), np.log10(pMin+10), 6)
     ticks = np.round(ticks / 10) * 10
 
-    # Axis setup- Mostly y axis being upside-down and log for pressure
+    # Axis setup
     for ax in axs:
-        ax.yaxis.set_inverted(True)
-        ax.set_yscale('log')
-        ax.set_ylim(bottom=pMax, top=pMin)
+        plotAx = yAxisPressure(plotAx, pressure, pMin)
 
-        ax.set_yticks(ticks)
-        ax.tick_params(axis='y', which='minor', left=False)
-        ax.yaxis.set_major_formatter(StrMethodFormatter('{x:.0f}'))
-        ax.yaxis.set_minor_formatter(NullFormatter())
-
-        ax.set_ylabel('Pressure ($hPa$)')
         ax.set_xlabel(xLabel)
         ax.set_title(title)
 
         ax.axhline(pressure[0], c='grey', alpha=0.2, linewidth=1, label='Model Levels')
         for p in pressure[1:]:
             ax.axhline(p, c='grey', alpha=0.2, linewidth=1)
-        ax.legend(loc='lower left')
+        if dataLabels is not None:
+            ax.legend(loc='lower left')
 
     # Plot profiles directly
     for i, (prof, dataLabel) in enumerate(zip(data, dataLabels)):
@@ -303,15 +414,15 @@ def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:
     A function built to map three variables, each as their own colour, with overlapping regions showing a mixture of the relevant colours. As an example of when this could be useful: this was originally developed to plot how much the three grass PFTs were increased in a deforested fsurdat file.
 
     :param data1: The first set of data to plot. This will correspond with blue.
-    :type data1: np.ndarray
+    :type data1: ndarray
     :param data2: The second set of data to plot. This will correspond with orange. Must be the same shape as data1.
-    :type data2: np.ndarray
+    :type data2: ndarray
     :param data3: The third set of data to plot. This will correspond with purple. Must be the same shape as data1.
-    :type data3: np.ndarray
+    :type data3: ndarray
     :param long: The longitude array corresponding to the three datasets. Must be the same shape as data1.
-    :type long: np.ndarray
+    :type long: ndarray
     :param lat: The latitude array corresponding to the three datasets. Must be the same shape as data1.
-    :type lat: np.ndarray
+    :type lat: ndarray
     :param savePath: The file to which the resulting figure will be saved.
     :type savePath: str
     :param title: The title to display on the plot.
@@ -414,22 +525,3 @@ def threeVar(data1:_ndarray, data2:_ndarray, data3:_ndarray, long:_ndarray, lat:
     # Save and clear figure
     saveFig(fig, savePath, saveDpi = 200)
     plt.close(fig)
-
-# if __name__ == '__main__':
-    ## threeVar example with fsurdat changes
-    # import netCDF4 as nc
-    # fsurdatPath = '/home/cmopfer/projects/def-mlague/cmopfer/surfdata_0.9x1.25_hist_78pfts_CMIP6_simyr2000_c190214.nc'
-    # diffPath = '/home/cmopfer/projects/def-mlague/cmopfer/surfdata_woodedToGrass_diff0.nc'
-    # plotPath = '/home/cmopfer/projects/def-mlague/cmopfer/grassDiff_woodedToGrass'
-
-    # fsurdat = nc.Dataset(fsurdatPath)
-    # lat_fsurdat = fsurdat.variables['LATIXY'][:]
-    # lon_fsurdat = fsurdat.variables['LONGXY'][:]
-
-    # diff = nc.Dataset(diffPath)
-    # PCT_NAT_PFT_diff = diff.variables['PCT_NAT_PFT']
-    # c3Arctic_diff = -PCT_NAT_PFT_diff[12][:]
-    # c3_diff = -PCT_NAT_PFT_diff[13][:]
-    # c4_diff = -PCT_NAT_PFT_diff[14][:]
-
-    # threeVar(c3Arctic_diff, c3_diff, c4_diff, lon_fsurdat, lat_fsurdat, plotPath, 'Added Grass PFTs In Deforested Simulation')
