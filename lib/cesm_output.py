@@ -3,9 +3,14 @@ Created: Camden Opfer, March 2026
 
 A collection of scripts to do basic aggregation and analysis of CESM output
 """
+# TODO Make function that ensures y, m, d, s inputs are strings of the required length
+# TODO See task in avg()
+
 # Imports for typing
+from os import environ as _environ
 from numpy import ndarray as _ndarray
 
+_ncoOutputRoot = f'/scratch/{_environ['USER']}/nco'
 _componentToDir = {'cam': 'atm', 'clm2': 'lnd', 'mosart': 'rof', 'pop': 'ocn'} # TODO Add more components as needed. Maybe even more options of models that run for the same component (e.g. do pop and mom have differently named output files?)
 _latNames = ['lat', 'TLAT', 'ULAT', 'doma_lat', 'slat']
 
@@ -25,7 +30,7 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
     :type returnPath: str or None, optional
     """
     import os
-    import glob
+    from glob import glob
     import re
     import netCDF4 as nc
     from .utils import log
@@ -55,9 +60,9 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
 
     # Get list of all the potentially relevant files
     if archive:
-        allFiles = glob.glob(os.path.join(outputPath, '*', 'hist', f'{fileSpec}.nc'), recursive=True) # Assumes outputPath/<component>/hist/<fname>.nc structure
+        allFiles = glob(os.path.join(outputPath, '*', 'hist', f'{fileSpec}.nc'), recursive=True) # Assumes outputPath/<component>/hist/<fname>.nc structure
     else:
-        allFiles = glob.glob(os.path.join(outputPath, f'{fileSpec}.nc')) # Assumes outputPath/<fname>.nc structure
+        allFiles = glob(os.path.join(outputPath, f'{fileSpec}.nc')) # Assumes outputPath/<fname>.nc structure
 
     allFiles.sort()
 
@@ -106,7 +111,7 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
 
             queryOutput(f'\nThe files:\n{reportedFiles}\nContain the variables:\n{varsDict}\n')
 
-def getPaths(outputRoot:str, archive:bool = True, component:str = 'cam', fileHVal:str|None = None, year:list[str]|None=None, month:list[str]|None=None, day:list[str]|None=None, second:list[str]|None=None) -> list[str]:
+def getPaths(outputRoot:str, archive:bool = True, component:str = 'cam', fileType:str = 'h0', years:list[str]|None=None, months:list[str]|None=None, days:list[str]|None=None, seconds:list[str]|None=None) -> tuple[list[str], str]:
     """
     Gets paths of all output files matching the type of output data and time domain to draw from specified by this functions arguments. By default, will provide the paths of all files in outputRoot/atm/hist.
 
@@ -116,64 +121,268 @@ def getPaths(outputRoot:str, archive:bool = True, component:str = 'cam', fileHVa
     :type archive: bool, optional
     :param component: A string representing the model component to retrieve data from. Commonly will be 'cam', 'clm2', or maybe 'mosart' or 'pop'.
     :type component: str, optional
-    :param fileHVal: Which of the (at most 10) output files for this component to search for. Typically '0', maybe '1', occasionally '2'-'9'. Default is None, which will grab all data.
-    :type fileHVal: str or None, optional
+    :param fileType: Which type of output file for this component to search for. Typically 'h0', maybe 'h1', occasionally 'h2'-'h9' or 'i'. Default is 'h0', which often corresponds to monthly output.
+    :type fileType: str, optional
     :param year: A list of strings representing the years from which to get output. Each string must have four numerical characters (e.g. '0001') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
     :type year: list[str] or None, optional
     :param month: A list of strings representing the months from which to get output. Each string must have two numerical characters (e.g. '01') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
     :type month: list[str] or None, optional
     :param day: A list of strings representing the days from which to get output. Each string must have two numerical characters (e.g. '01') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
     :type day: list[str] or None, optional
-    :param second: A list of strings representing the seconds from which to get output. Each string must have five numerical characters (e.g. '000000') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
+    :param second: A list of strings representing the seconds from which to get output. Each string must have five numerical characters (e.g. '00000') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
     :type second: list[str] or None, optional
 
     :return: A list containing all the relevant paths found
     :rtype: list[str]
     """
     import os
-    import glob
+    import warnings
     from itertools import product
     from .utils import log
 
     if component not in _componentToDir:
         raise ValueError(f'Invalid argument {component} for component in getPaths. Must be one of {_componentToDir.keys()}')
-    if fileHVal not in list(str(i) for i in range(10)) and fileHVal is not None:
-        raise ValueError(f'Invalid argument {fileHVal} for fileHVal in getPaths. Must be one of {list(str(i) for i in range(10))} or None')
+    if fileType not in list(f'h{i}' for i in range(10)) and fileType != 'i':
+        raise ValueError(f'Invalid argument {fileType} for fileType in getPaths. Must be one of {list(f'h{i}' for i in range(10))} or i')
 
     if archive:
         dataRoot = os.path.join(outputRoot, _componentToDir[component], 'hist')
     else:
         dataRoot = outputRoot
 
-    if year is None:
-        year = ['*'] # Regex that will allow all years to be found
-    if month is None:
-        month = ['*'] # Regex that will allow all months to be found
-    if day is None:
-        day = ['*'] # Regex that will allow all days to be found
-    if second is None:
-        second = ['*'] # Regex that will allow all seconds to be found
-    timeOptCount = len(year) * len(month) * len(day) * len(second)
+    partialFile = os.path.join(dataRoot, f'*.{component}.{fileType}.')
 
-    if fileHVal is None:
-        fileHVal = '?' # Regex that will allow any single character. These files can be numbered 0 through 9 so, effectively, this grabs all output files from this component.
+    if years is None:
+        years = ['????'] # Regex that will allow all years to be found
+    if months is None:
+        months = ['??'] # Regex that will allow all months to be found
+    if days is None:
+        days = ['??'] # Regex that will allow all days to be found
+    if seconds is None:
+        seconds = ['?????'] # Regex that will allow all seconds to be found
 
-    fileSpecs = ['*' + '.' + component + '.' + fileHVal + '.'] * timeOptCount * 2
-    for i, (y, m, d, s) in enumerate(product(year, month, day, second)): # product iterates over all combinations of the provided lists
-        fileSpecs[2*i] += y + '-' + m + '-' + d + '-' + s # Used by CESM when output frequency is high enough
-        fileSpecs[2*i+1] += y + '-' + m # Used by CESM when output frequency is low enough
+    if os.path.exists(f'{partialFile}{years[0]}.nc'):
+        frequencyPrecision = 'year'
+        fileSpecs = [partialFile] * len(years)
+        for i, y in enumerate(years):
+            fileSpecs[i] += f'{y}.nc'
 
-    allFiles = [] # Can't pre-allocate in case wildcards (*'s) lead to multiple hits
+    elif os.path.exists(f'{partialFile}{years[0]}-{months[0]}.nc'):
+        frequencyPrecision = 'month'
+        fileSpecs = [partialFile] * (len(years) * len(months))
+        for i, (y, m) in enumerate(product(years, months)):
+            fileSpecs[i] += f'{y}-{m}.nc'
+
+    elif os.path.exists(f'{partialFile}{years[0]}-{months[0]}-{days[0]}.nc'):
+        frequencyPrecision = 'day'
+        fileSpecs = [partialFile] * (len(years) * len(months) * len(days))
+        for i, (y, m, d) in enumerate(product(years, months, days)):
+            fileSpecs[i] += f'{y}-{m}-{d}.nc'
+
+    elif os.path.exists(f'{partialFile}{years[0]}-{months[0]}-{days[0]}.nc'):
+        frequencyPrecision = 'second'
+        fileSpecs = [partialFile] * (len(years) * len(months) * len(days) * len(seconds))
+        for i, (y, m, d, s) in enumerate(product(years, months, days, seconds)):
+            fileSpecs[i] += f'{y}-{m}-{d}-{s}.nc'
+
+    else:
+        raise FileNotFoundError(f'Unable to find file starting with {partialFile} with an ending matching time parameters years={years}, months={months}, days={days}, and seconds={seconds}.')
+
+    validFiles = [] # Can't pre-allocate in case regex wildcards lead to multiple hits
+    missingFiles = []
     for fileSpec in fileSpecs:
-        allFiles += glob.glob(os.path.join(dataRoot, f'{fileSpec}.nc'))
+        if os.path.exists(fileSpec):
+            validFiles += fileSpec
+        else:
+            missingFiles += fileSpec
+    if missingFiles:
+        warnings.warn(f'Expected to find files {missingFiles}, but they do not exist.', UserWarning)
 
-    allFiles.sort()
+    if 'h' not in fileType:
+        frequencyPrecision = 'instantaneous'
+    log(f'getPaths found {len(validFiles)} paths in {outputRoot} matching the specifications.')
 
-    log(f'getPaths found {len(allFiles)} paths in {outputRoot} matching the specifications.')
+    return validFiles, frequencyPrecision
 
-    return allFiles
+def findRelated(baseFile:str, component:str = 'cam', fileType:str = '*') -> list[str]|None:
+    """
+    Finds a sample file from the specified component based on relative paths to baseFile or metadata contained within basefile. In the case where files from metadata are used, this function is recursive
 
-def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWeight=True) -> tuple[_ndarray, int]:
+    :param baseFile: The file whose "cousin" this function will search for.
+    :type baseFile: str
+    :param component: The CESM component tag to search for in file names. Should be one of the keys of _componentToDir (cam, clm2, mosart, etc.). Default is cam.
+    :type component: str, optional
+    :param fileType: Which type of output file for this component to search for. Typically 'h0', maybe 'h1', occasionally 'h2'-'h9' or 'i'. Default is '*', in which case the returned list will have one element for each found fileType.
+    :type fileType: str, optional
+
+    :return: Either a list of strings representing the paths to relvent files (each with unique fileTypes, so only will have len > 1 if fileType == *) or None if no relevant files are found.
+    :rtype: list[str] or None
+    """
+    import re
+    import os
+    from glob import glob
+    from copy import copy
+    import netCDF4 as nc
+
+    def makeOutput(relatedFiles:list):
+        if fileType != '*':
+            return [relatedFiles[0]]
+
+        outFiles = []
+        outFileTypes = []
+        for relatedFile in relatedFiles:
+            currentFileType = relatedFile.split('.')[-3]
+            if currentFileType not in outFileTypes:
+                outFileTypes.append(currentFileType)
+                outFiles.append(relatedFile)
+
+    if component not in _componentToDir:
+        raise ValueError(f'Unknown CESM component {component} in findRelated().')
+    if fileType not in list(f'h{i}' for i in range(10)) and fileType != 'i' and fileType != '*':
+        raise ValueError(f'Invalid argument {fileType} for fileType in findRelated(). Must be one of {list(f'h{i}' for i in range(10))} or i or *')
+
+    if re.match(f'*.{component}.{fileType}.*.nc', baseFile):
+        return makeOutput(baseFile)
+
+    baseDir = os.path.dirname(baseFile)
+
+    # Assume archive-style directory structure
+    searchPattern = os.path.join(baseDir, '..', '..', _componentToDir[compile], 'hist', f'*.{component}.{fileType}.*.nc')
+    relatedFiles = glob(searchPattern)
+
+    if relatedFiles:
+        return makeOutput(relatedFiles)
+
+    # Assume all data in the same directory
+    relatedFiles = glob(os.path.join(baseDir, f'*.{component}.{fileType}.*.nc'))
+    if relatedFiles:
+        return makeOutput(relatedFiles)
+
+    # Try metadata within baseFile. Typical when baseFile was generated with an NCO tool.
+    with nc.Dataset(baseFile, 'r') as baseDs:
+        hist = copy(baseDs.history)
+
+    if not isinstance(hist, str) or '.nc' not in hist: # hist is not helpful. The "'.nc' not in hist" check is only carried out if the first fails (meaning hist is a str), so that shouldn't throw any errors
+        return
+
+    hist = hist.split(' ')
+    for histElement in hist:
+        if histElement[-3:] != '.nc':
+            pass
+
+        # # This is commented out because if avoids the case where histElement is in a directory with other valid fileTypes and the fileType argument is '*'
+        # if re.match(f'*.{component}.{fileType}.*.nc', histElement):
+        #     return makeOutput([histElement])
+
+        relatedFiles = findRelated(histElement, component, fileType)
+        if relatedFiles:
+            return relatedFiles # No need to ensure list format, since this was returned recursively
+
+    return
+
+def ncoPath(cesmOutRoot:str, component:str = 'cam', years:list[str]|None=None, months:list[str]|None=None, days:list[str]|None=None, seconds:list[str]|None=None, ncoOutputRoot:str=_ncoOutputRoot, operation:str|None=None):
+    """
+    TODO
+    """
+    import os
+    import numpy as np
+
+    if component not in _componentToDir:
+        raise ValueError(f'Unknown CESM component {component} in ncoPath().')
+
+    cesmOutName = os.path.basename(os.path.normpath(cesmOutRoot)) # normpath gets rid of any extra '/' at the end. Overall, this usually makes outputName = $CASE
+    ncoFile = f'{component}'
+
+    if operation is not None:
+        ncoFile += f'_{operation}'
+
+    # Make a "hash" representing the time arguments. TODO Make this actually guarantee uniqueness for any unique category of inputs. Not sure how many digits that would require though?!?
+    timeVal = 0
+    if years:
+        timeVal += np.sum(np.array(years) * 365 * 24 * 3600)
+    if months:
+        timeVal += np.sum(np.array(months) * 30 * 24 * 3600)
+    if days:
+        timeVal += np.sum(np.array(days) * 24 * 3600)
+    if seconds:
+        timeVal += np.sum(seconds)
+    ncoFile += '_' + hex(timeVal)[2:].zfill(8)
+
+    ncoFile += '.nc'
+    return os.path.join(ncoOutputRoot, 'ncra', cesmOutName, ncoFile)
+
+def avgOverTime(cesmOutRoot:str, archive:bool = True, varNames:list[str]|None=None, component:str = 'cam', fileType:str = 'h0', years:list[str]|None=None, months:list[str]|None=None, days:list[str]|None=None, seconds:list[str]|None = None, ncoOutputRoot:str|None = None, operation:str|None = None) -> str:
+    """
+    Uses getPaths() to find paths corresponding to a time period and then uses nco.ncra to place an average over them in a file specified by ncoPath(). If the averaged file corresponding to the provided cesmOutRoot, component, and time arguments already exists, variables which do not yet have data are appended to the file, while others are skipped for speed. Returns the path to the netCDF file containing the relevant data.
+
+    :param cesmOutRoot: A directory with CESM output. Often of the form "/scratch/$USER/cesm/output/archive/$CASE" or, occasionally, "/scratch/$USER/cesm/output/$CASE/run".
+    :type cesmOutRoot: str
+    :param archive: Whether or not cesmOutRoot leads to an archive directory, which things like lnd/hist subdirectories contain the actual data. If True, assumes that directory structure, and looks for output files accordingly. If False, assumes all data is in cesmOutRoot, and does not do any recursive searching.
+    :type archive: bool, optional
+    :param varNames: A list containing the subset of variables from the CESM output to include in the output. Default is None, in which case all variables are averaged.
+    :type varNames: list[str] or None, optional
+    :param component: A string representing the model component to retrieve data from. Commonly will be 'cam', 'clm2', or maybe 'mosart' or 'pop'.
+    :type component: str, optional
+    :param fileType: Which type of output file for this component to search for. Typically 'h0', maybe 'h1', occasionally 'h2'-'h9' or 'i'. Default is 'h0' because it is most likely to exist. The type 'h0' corresponds to monthly output unless the CESM namelist for component was altered.
+    :type fileType: str, optional
+    :param years: A list of strings representing the years from which to get output. Each string must have four numerical characters (e.g. '0001') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
+    :type years: list[str] or None, optional
+    :param months: A list of strings representing the months from which to get output. Each string must have two numerical characters (e.g. '01') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
+    :type months: list[str] or None, optional
+    :param days: A list of strings representing the days from which to get output. Each string must have two numerical characters (e.g. '01') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
+    :type days: list[str] or None, optional
+    :param seconds: A list of strings representing the seconds from which to get output. Each string must have five numerical characters (e.g. '000000') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
+    :type seconds: list[str] or None, optional
+    :param ncoOutputRoot: The root directory to which the output from NCO operations (like ncra here) should be written. Should be consistent between uses so that this and related functions can find output. Default is None, which uses _ncoOutputRoot, which in turn is set above to be /scratch/$USER/nco.
+    :type ncoOutputRoot: str or None, optional
+    :param operation: The operation argument to be passed to NCO's ncra. Must be one of 'avg', 'sqravg', 'avgsqr', 'max', 'min', 'mabs', 'mebs', 'mibs', 'rms', 'rmssdn', 'sqrt', 'tabs', and 'ttl', or None. Default is None, in which case ncra performs an arithmetic average (same as passing 'avg').
+    :type operation: str or None, optional
+
+    :return: String representing the path to the averaged data
+    :rtype: str
+    """
+    import os
+    import numpy as np
+    from nco import Nco
+
+    if component not in _componentToDir:
+        raise ValueError(f'Unknown CESM component {component} in avgOverTime().')
+    if ncoOutputRoot is None:
+        ncoOutputRoot = _ncoOutputRoot
+    if operation is None:
+        operation = 'avg' # Explicitly set so that the ncoPath reflects that this is using ncra
+
+    ncoOutFile = ncoPath(cesmOutRoot, component, years, months, days, seconds, ncoOutputRoot, operation)
+
+    if not os.path.exists(ncoOutFile):
+        cesmOutFiles, dataFrequency = getPaths(cesmOutRoot, archive, component, fileType, years, months, days, seconds)
+
+        ncoOptions = ['-A'] # -A = append, so will add any variables that don't exist in ncoOutFile, but otherwise leave it be
+        ncoKwargs = {}
+        if varNames is not None:
+            ncoKwargs['variable'] = ','.join(varNames) # Join will turn a list like ['U','V','T'] into a string like 'U,V,T' as required by the NCO CLI
+        if operation in ['avg', 'sqravg', 'avgsqr', 'max', 'min', 'mabs', 'mebs', 'mibs', 'rms', 'rmssdn', 'sqrt', 'tabs', 'ttl']:
+            ncoKwargs['operation'] = operation
+        else:
+            raise ValueError
+
+        if dataFrequency == 'month':
+            # NOTE Ignores leap years, though CESM usually does too
+            if months is None:
+                monthWeights = '31,28,31,30,31,30,31,31,30,31,30,31'
+            else:
+                monthLengths = np.array(['na','31','28','31','30','31','30','31','31','30','31','30','31']) # Assumes Jan=1, Dec=12 (as required by months argument anyway)
+                relevantMonthLengths = monthLengths[months]
+                monthWeights = ','.join(relevantMonthLengths.tolist())
+
+            ncoKwargs['weight'] = monthWeights
+
+        nco = Nco()
+        nco.ncra(input=cesmOutFiles, output=ncoOutFile, options=ncoOptions, use_shell=True, **ncoKwargs)
+
+    return ncoOutFile
+
+def avgOverDims(dataFile:str, varAveraged:str, dimNames:list[str]|None = None, landWeight = True) -> _ndarray:
     """
     Identifies if provided dimNames correspond to dimensions of the provided data and, if so, takes an average along those dimensions. By default, takes the average in all dimensions. More useful cases for this function would be avgOverDims(x, ['time']), avgOverDims(y, ['lat', 'lon']), or avgOverDims(z, ['lev']).
 
@@ -181,8 +390,8 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
 
     :param dataFile: Path to the file from which data will be derived.
     :type dataFile: str
-    :param varName: The variable to be averaged. Must be included as a variable in fPath.
-    :type varName: str
+    :param varAveraged: The variable to be averaged. Must be included as a variable in fPath.
+    :type varAveraged: str
     :param dimNames: A list of strings. If any of the strings matches the name of a dimension of ncVar, that dimension will be averaged across. If an element of dimNames is not a dimension of ncVar, it will be silently skipped. By default, does not take any averages.
     :type dimNames: list[str] or None, optional
     :param landWeight: A boolean determining whether or not to weight the average by the amount of land in each grid cell. Default is True, so the average will be weighted.
@@ -191,41 +400,33 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
     :return: Numpy array with data averaged and flattened across the specified dimension(s)
     :rtype: np.ndarray
     """
-    import os
-    import glob
     import warnings
     import numpy as np
     import netCDF4 as nc
     from .utils import log
 
-    outputBase = os.path.basename(dataFile)
-
     def getNcVar(ds, varName):
         """"
-        Tries to get the data from the provided dataset. If that fails, finds a CAM dataset to use. CAM is sometimes needed for LANDFRAC
+        Tries to get the data from the provided dataset. If that fails, finds a related CESM dataset to use.
         """
         try:
             return ds.variables[varName]
         except KeyError:
-            log(f'Variable {varName} not found  by avgOverDims() in provided dataset. Will check for it in related CAM output.', 'debug')
+            log(f'Variable {varName} not found by avgOverDims() in provided dataset. Will check for it in related CESM output.', 'debug')
 
-        # Assume archive-style directory structure
-        camPattern = os.path.join(outputBase, '..', '..', 'atm', 'hist', '*.cam.h0.*.nc')
-        camFiles = glob.glob(camPattern)
+        for component in _componentToDir:
+            relatedFiles = findRelated(dataFile, component)
 
-        if not camFiles: # Archive-style search was unsuccessful
-            # Assume all data in the same directory
-            camFiles = glob.glob(os.path.join(outputBase, '*.cam.h0.*.nc'))
+            for file in relatedFiles:
+                with nc.Dataset(file, 'r') as ds:
+                    try:
+                        ds.variables[varName]
+                    except KeyError:
+                        continue # Moves on to the next file in relatedFiles
+                return file # Did not move on, so this dataset has the variable varName. Return it
 
-        if camFiles:
-            with nc.Dataset(camFiles[0], 'r') as camDs:
-                try:
-                    return camDs.variables[varName]
-                except KeyError:
-                    pass
-
-        # Either camFiles was still empty, or the chosen variable was not found in the CAM data. Either way, skip weighting by this variable
-        warnings.warn(f'Variable {varName} not found in the provided dataset, and unable to fetch it from a related CAM file. avgOverDims will skip weighting by {varName}.')
+        # Unable to locate this variable
+        warnings.warn(f'Variable {varName} not found in the provided dataset, and unable to fetch it from a related CESM output. avgOverDims will skip weighting by {varName}.')
         return 1
 
     def getSingleWeight(ds, varName):
@@ -252,30 +453,25 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
         out /= np.nanmean(out)
         return out
 
-    def getWeights(dataPath:str, outShape:tuple[int], varDimsToNames:dict[int:str]):
+    def getWeights(dataPath:str, outShape:tuple[int], varDimsToNames:dict[int:str]) -> _ndarray|int:
         """
-        Gets the variable given by varNames (or all the elements of the list varNames) from a cam output file for use in weighting. Could fail if h0 files don't have this variable, or if avgOverDims was pointed towards an outputBase without cam output in a typical relative location.
+        Gets the variable given by varNames (or all the elements of the list varNames) from a relevant CESM output file for use in weighting. Could fail if no file is found containing the needed variable.
         """
         if not varDimsToNames:
             # Factor to mutliply is 1 since no weighting is being done
             return 1
 
-        if dataPath is None:
-            log(f'Unable to find CAM data in {outputBase} or {os.path.join(outputBase, '..', '..', 'atm', 'hist')}. Will not do any weighting by {varDimsToNames.values()}', 'warning')
-            return 1
-
         weightFactor = np.ones(outShape)
-        with nc.Dataset(dataPath, 'r') as data:
-            for varDim, varName in varDimsToNames.items():
-                var = getSingleWeight(data, varName) # Will be 1D array with shape (outShape[i], )
-                inds = (..., ) + (None, ) * (len(outShape) - varDim - 1) # Indexing by inds will empty axes extending to last dim of weightFactor. So shape will be (outShape[i], 1, 1, ..., 1). See Numpy docs on broadcasting: https://numpy.org/doc/stable/reference/arrays.nditer.html#broadcasting-array-iteration
-                weightFactor *= var[inds]
+        for varDim, varName in varDimsToNames.items():
+            var = getSingleWeight(dataPath, varName) # Will be 1D array with shape (outShape[i], )
+            inds = (..., ) + (None, ) * (len(outShape) - varDim - 1) # Indexing by inds will empty axes extending to last dim of weightFactor. So shape will be (outShape[i], 1, 1, ..., 1). See Numpy docs on broadcasting: https://numpy.org/doc/stable/reference/arrays.nditer.html#broadcasting-array-iteration
+            weightFactor *= var[inds]
 
-        log(f'Retrieved {varDimsToNames.values()} from data in {dataPath}', 'debug')
+        log(f'Retrieved weight factors {varDimsToNames.values()}', 'debug')
         return weightFactor/np.sum(weightFactor)
 
     with nc.Dataset(dataFile, 'r') as data:
-        ncVar = data.variables[varName]
+        ncVar = data.variables[varAveraged]
         raw = ncVar[:]
         actualDimNames = [dim.name for dim in ncVar.get_dims()]
 
@@ -312,10 +508,10 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
         if '.clm2.' in dataFile:
             factorVars[lastDim] = 'landfrac'
         else:
-            factorVars[lastDim] = 'LANDFRAC' # This is the cam variable. getNcVar() will fetch related CAM data if dataFile is not CAM data itself
+            factorVars[lastDim] = 'LANDFRAC' # This is the relevant cam variable. getNcVar() will fetch related CAM data if dataFile is not CAM data itself
 
     log(f'avgOverDims found the following dimensions to average over: {matchingDims}', 'debug')
-    log(f'A weighted average will be taken over {factorVars}', 'debug')
+    log(f'A weighted average will be taken over {factorVars.values()}', 'debug')
 
     weights = getWeights(dataFile, raw.shape, factorVars)
     raw *= weights
@@ -329,47 +525,13 @@ def avgOverDims(dataFile:str, varName:str, dimNames:list[str]|None=None, landWei
 
     return averagedArr
 
-def avgOverTime(varName:str, outputRoot:str, archive:bool = True, component:str = 'cam', fileHVal:str|None = None, year:list[str]|None=None, month:list[str]|None=None, day:list[str]|None=None, second:list[str]|None=None, averageDimNames:list[str]|None=None, landWeight=True) -> tuple[_ndarray, int]:
+def avg(varAveraged: str, dimsAveragedOver: list[str], cesmOutRoot:str, archive:bool = True, yearRange:tuple[int]|None = None, landWeight:bool = True):
     """
-    Uses getPaths() to find paths corresponding to a time period and avgOverDims() to get data for each of them, then takes an average. All the inputs to this function match with the inputs of those functions.
-
-    :param varName: The variable to be averaged. Must be included as a variable in fPath.
-    :type varName: str
-    :param outputRoot: A directory with CESM output. Often of the form "/scratch/$USER/cesm/output/archive/$CASE" or, occasionally, "/scratch/$USER/cesm/output/$CASE/run".
-    :type outputRoot: str
-    :param archive: Whether or not outputRoot leads to an archive directory, which things like lnd/hist subdirectories contain the actual data. If True, assumes that directory structure, and looks for output files accordingly. If False, assumes all data is in outputRoot, and does not do any recursive searching.
-    :type archive: bool, optional
-    :param component: A string representing the model component to retrieve data from. Commonly will be 'cam', 'clm2', or maybe 'mosart' or 'pop'.
-    :type component: str, optional
-    :param fileHVal: Which of the (at most 10) output files for this component to search for. Typically '0', maybe '1', occasionally '2'-'9'. Default is None, which will grab all data.
-    :type fileHVal: str or None, optional
-    :param year: A list of strings representing the years from which to get output. Each string must have four numerical characters (e.g. '0001') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
-    :type year: list[str] or None, optional
-    :param month: A list of strings representing the months from which to get output. Each string must have two numerical characters (e.g. '01') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
-    :type month: list[str] or None, optional
-    :param day: A list of strings representing the days from which to get output. Each string must have two numerical characters (e.g. '01') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
-    :type day: list[str] or None, optional
-    :param second: A list of strings representing the seconds from which to get output. Each string must have five numerical characters (e.g. '000000') or be some regular expression that will evaluate in that way. Default is None, which will grab all data.
-    :type second: list[str] or None, optional
-    :param dimNames: A list of strings. If any of the strings matches the name of a dimension of ncVar, that dimension will be averaged across. If an element of dimNames is not a dimension of ncVar, it will be silently skipped. By default, does not take any averages.
-    :type dimNames: list[str] or None, optional
-    :param landWeight: A boolean determining whether or not to weight the average by the amount of land in each grid cell. Default is True, so the average will be weighted.
-    :type landWeight: bool, optional
-
-    :return: Numpy array with data averaged and flattened across the specified dimension(s)
-    :rtype: np.ndarray
+    Combines avgOverTime() and avgOverDims() to allow for averaging over both time and other dimensions. Loses some of the customizability of the other functions (e.g. by requiring a range of years rather than allowing for a list), but this should make it simpler to use.
     """
-    paths = getPaths(outputRoot, archive, component, fileHVal, year, month, day, second)
+    component, fileType = 1, 2 # TODO Use query to find component and fileType. Maybe use this in avgOverDims too? Could use something like timedInput from IATEM data management to resolve having multiple hits (as in, same variable recorded in cam.h0 and cam.h1 files or in cam.h0 and clm2.h0)
+    averagedFile = avgOverTime(cesmOutRoot, archive, [varAveraged], component, fileType, years = list[range(yearRange[0], yearRange[1])])
 
-    if not paths:
-        raise FileNotFoundError(f'Unable to find {component} data to average over in {outputRoot}')
+    averagedData = avgOverDims(averagedFile, varAveraged, dimsAveragedOver, landWeight)
 
-    out = avgOverDims(paths[0], varName, averageDimNames, landWeight)
-    if len(paths) == 1:
-        return out
-
-    for path in paths[1:]:
-        out += avgOverDims(path, varName, averageDimNames, landWeight)
-    out /= len(paths)
-
-    return out
+    return averagedData
