@@ -145,3 +145,70 @@ def log(message:str|Exception, logLevel:int|str=_INFO, loggerName:str=__name__):
         logLevel = logging.INFO
 
     logger.log(level=logLevel, msg=message)
+
+def timedInput(prompt, default='y', timeout=30, checkInterval=0.05):
+    """
+    A function that allows the user to provide input, but assumes a default value after 'timeout' seconds if no input is provided. Helpful when running code overnight, when API requests and such should be automatically retried.
+
+    checkInterval is used only for Windows machines, and is the precision with which this function checks for keyboard interupts, closing use of the 'enter' key, and for the function having timed out.
+
+    Derived from the inputtimeout package (https://github.com/johejo/inputimeout/tree/master), but adds a default output rather than triggering an error if no input is provided.
+    """
+    import sys
+    import os
+
+    def echo(string):
+        sys.stdout.write(string)
+        sys.stdout.flush()
+
+    if os.name == 'posix':
+        import termios # pylint: disable=import-error
+        import selectors
+
+        LF = '\n'
+
+        echo(prompt)
+        sel = selectors.DefaultSelector()
+        sel.register(sys.stdin, selectors.EVENT_READ)
+        events = sel.select(timeout)
+
+        if events:
+            key, _ = events[0]
+            return key.fileobj.readline().rstrip(LF)
+        else:
+            echo(LF)
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        return default
+
+    else:
+        import msvcrt # pylint: disable=import-error
+        import time
+
+        SP = ' '
+        CR = '\r'
+        LF = '\n'
+        CRLF = CR + LF
+
+        echo(prompt)
+        begin = time.monotonic()
+        end = begin + timeout
+        line = ''
+
+        while time.monotonic() < end:
+            if msvcrt.kbhit():
+                c = msvcrt.getwche()
+                if c in (CR, LF):
+                    echo(CRLF)
+                    return line
+                if c == '\003':
+                    raise KeyboardInterrupt
+                if c == '\b':
+                    line = line[:-1]
+                    cover = SP * len(prompt + line + SP)
+                    echo(''.join([CR, cover, CR, prompt, line]))
+                else:
+                    line += c
+            time.sleep(checkInterval)
+
+        echo(CRLF)
+        return default

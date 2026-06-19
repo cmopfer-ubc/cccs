@@ -14,9 +14,116 @@ _ncoOutputRoot = f'/scratch/{_environ['USER']}/nco'
 _componentToDir = {'cam': 'atm', 'clm2': 'lnd', 'mosart': 'rof', 'pop': 'ocn'} # TODO Add more components as needed. Maybe even more options of models that run for the same component (e.g. do pop and mom have differently named output files?)
 _latNames = ['lat', 'TLAT', 'ULAT', 'doma_lat', 'slat']
 
-def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileSpec:str|None = None,  returnPath:str|None = None):
+def fileSpec(case:str|None=None, component:str|None = None, ftype:str|None = None, years:list[str]|None=None, months:list[str]|None=None, days:list[str]|None=None, seconds:list[str]|None=None) -> tuple[str]:
     """
-    Identifies the different types of netCDF files (e.g. <run-name>.cam.h1 or <run-name>.clm2.h0) within the output path, searching through <component>/hist subdirectories if this is the path to an archive directory. If a search term is provided, will return a list of files/variables containing that term (if any exist). If return path is specified, the output of this function is saved to a text file.
+    TODO
+    """
+    from itertools import product
+
+    ## Handle basic inputs
+    if case is None:
+        case = '*'
+
+    if component is None:
+        component = '*'
+
+    if ftype is None:
+        ftypes = ['i.', 'h?.']
+    else:
+        ftypes = [ftype]
+
+    ## Handle time
+    if years is None:
+        years = ['????'] # Regex that will allow all years to be found
+    else:
+        for year in years:
+            if not isinstance(year, str) or len(year) != 4:
+                raise ValueError(f'Year value {year} is invalid. Must be string with length 4')
+    if months is None:
+        months = ['??'] # Regex that will allow all months to be found
+    else:
+        for month in months:
+            if not isinstance(month, str) or len(month) != 2:
+                raise ValueError(f'Year value {month} is invalid. Must be string with length 2')
+    if days is None:
+        days = ['??'] # Regex that will allow all days to be found
+    else:
+        for day in days:
+            if not isinstance(day, str) or len(day) != 2:
+                raise ValueError(f'Year value {day} is invalid. Must be string with length 2')
+    if seconds is None:
+        seconds = ['?????']
+    else:
+        for second in seconds:
+            if not isinstance(second, str) or len(second) != 5:
+                raise ValueError(f'Year value {second} is invalid. Must be string with length 5')
+
+    monthOpts = len(years) * len(months)
+    dayOpts = len(years) * len(months) * len(days)
+    secondOpts = len(years) * len(months) * len(days) * len(seconds)
+
+    times = [''] * (monthOpts + dayOpts + secondOpts)
+    i = 0
+    for y, m, d, s in product(years, months, days, seconds):
+        for y in years:
+            times += y
+            i += 1
+
+        for y, m in product(years, months):
+            times += f'{y}-{m}'
+            i += 1
+
+        for y, m, d in product(years, months, days):
+            times += f'{y}-{m}-{d}'
+            i += 1
+
+        for y, m, d, s in product(years, months, days, seconds):
+            times += f'{y}-{m}-{d}-{s}'
+            i += 1
+
+    ## Combine into filespecs
+    fileSpecs = []
+    for _ftype, time in product(ftypes, times):
+        fileSpecs.append(f'{case}.{component}.{_ftype}.{time}.nc')
+
+    return fileSpecs
+
+def pathSpec(outputPath:str, archive:bool = True, **kwargs):
+    """
+    TODO
+    """
+    import os
+    from glob import glob
+
+    fSpecs = fileSpec(kwargs)
+
+    if archive:
+        # Assumes outputPath/<component>/hist/<fname>.nc structure
+        try:
+            component = kwargs['component']
+        except KeyError: # component not specified in kwargs, so use '*' wildcard
+            componentDir = '*'
+        else: # This is executed when kwargs['component'] did NOT throw a KeyError, meaning it is specified. In this case, use that component to specify the search directory
+            componentDir = _componentToDir[component]
+
+        allFiles = []
+        for fSpec in fSpecs:
+            allFiles += glob(os.path.join(outputPath, componentDir, 'hist', fSpec))
+    else:
+        # Assumes outputPath/<fname>.nc structure
+        allFiles = []
+        for fSpec in fSpecs:
+            allFiles += glob(os.path.join(outputPath, fSpec))
+
+    allFiles.sort()
+
+    return allFiles
+
+def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, returnPath:str|None = None, **kwargs):
+    """
+    Identifies the different types of netCDF files (e.g. <run-name>.cam.h1.<time>.nc or <run-name>.clm2.h0.<time>.nc) within the output path, searching through <component>/hist subdirectories if this is the path to an archive directory. If a search term is provided, will return a list of files/variables containing that term (if any exist). If return path is specified, the output of this function is saved to a text file.
+
+    Keyword arguments are passed to fileSpec(), and are used to determine what subset of output files are allowable (e.g. which component they must come from, or whether they are "*.h1.*" history files). See fileSpec() for more details.
 
     :param outputPath: The root directory for the CESM run's output.
     :type outputPath: str
@@ -24,13 +131,10 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
     :type archive: bool, optional
     :param searchTerm: A string (can be a regex string) which the variable names and descriptions of all relevant output files will be searched for. Default is None, so all files/variables are returned. Still helpful because they are neatly organized.
     :type searchTerm: str or None, optional
-    :param fileSpec: A string which must be contained in the file names returned. Common use case is fileSpec='.clm2.' or '.h1.' or '.cam.h0.'. Default is None, which uses *.
-    :type fileSpec: str or None, optional
     :param returnPath: Path to a text file to which the output of this function will be written. Default is None, in which case cccs.utils.log will either print or log the output.
     :type returnPath: str or None, optional
     """
     import os
-    from glob import glob
     import re
     import netCDF4 as nc
     from .utils import log
@@ -53,28 +157,17 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
                 log(f'Saving queryOutput to file had error: {e}\nWill log output instead.')
                 log(output)
 
-    if fileSpec is None:
-        fileSpec = '*'
-    else:
-        fileSpec = '*' + fileSpec + '*'
-
-    # Get list of all the potentially relevant files
-    if archive:
-        allFiles = glob(os.path.join(outputPath, '*', 'hist', f'{fileSpec}.nc'), recursive=True) # Assumes outputPath/<component>/hist/<fname>.nc structure
-    else:
-        allFiles = glob(os.path.join(outputPath, f'{fileSpec}.nc')) # Assumes outputPath/<fname>.nc structure
-
-    allFiles.sort()
+    allFiles = pathSpec(outputPath, archive, **kwargs)
 
     # Find files with unique forms. E.g. <run-name>.cam.h0.stuff and <run-name>.cam.h1.things are different kinds of file, but not <run-name>.cam.h0.stuff and <run-name>.cam.h0.blah
     fileTypes = {}
     for file in allFiles:
         fname = os.path.basename(file) # Get the bit after the last / (or \ if on Windows for some reason)
-        ftype = '.'.join(fname.split('.')[-4:-2])
+        compAndFtype = '.'.join(fname.split('.')[-4:-2])
         try:
-            fileTypes[ftype].append(file)
+            fileTypes[compAndFtype].append(file)
         except KeyError:
-            fileTypes[ftype] = [file]
+            fileTypes[compAndFtype] = [file]
 
     queryOutput(f'Found {len(fileTypes)} distinct file types.')
 
@@ -110,6 +203,66 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, fileS
                 reportedFiles = files
 
             queryOutput(f'\nThe files:\n{reportedFiles}\nContain the variables:\n{varsDict}\n')
+
+def varQuery(varToContain:str, outputPath:str, archive:bool = True, **kwargs) -> list[str]:
+    """
+    TODO Write this
+
+    Keyword arguments are passed to fileSpec(), and are used to determine what subset of output files are allowable (e.g. which component they must come from, or whether they are "*.h1.*" history files). See fileSpec() for more details.
+
+    :param varToContain: The variable which the returned file(s) will contain. Must match exactly (including case-sensitivity) with the netCDF file's name.
+    :type varToContain: str
+    :param outputPath: The root directory for the CESM run's output.
+    :type outputPath: str
+    :param archive: Whether this is an archive directory (query will search for outputPath/<component>/hist/*.nc files) or not (query will search for outputPath/*.nc files)
+    :type archive: bool, optional
+
+    :return: List of paths matching the specifications, and containing the variable varToContain.
+    :rtype: list[str]
+    """
+    import os
+    import re
+    import netCDF4 as nc
+    from .utils import log, timedInput
+
+    allFiles = pathSpec(outputPath, archive, **kwargs)
+
+    # Find files with unique forms. E.g. <run-name>.cam.h0.stuff and <run-name>.cam.h1.things are different kinds of file, but not <run-name>.cam.h0.stuff and <run-name>.cam.h0.blah
+    fileTypes = {}
+    for file in allFiles:
+        fname = os.path.basename(file)
+        compAndFtype = '.'.join(fname.split('.')[-4:-2])
+        try:
+            fileTypes[compAndFtype].append(file)
+        except KeyError:
+            fileTypes[compAndFtype] = [file]
+
+    groupedFiles = {}
+    for compAndFtype, files in fileTypes.items():
+        ds = nc.Dataset(files[0], 'r')
+        varsDict = ds.variables
+
+        for varName in varsDict:
+            varName = str(varName)
+            if re.search(varToContain, varName):
+                groupedFiles[compAndFtype] = files
+
+    if len(groupedFiles) == 0:
+        log(f'Unable to find file containing variable {varToContain} in {outputPath}')
+        return []
+
+    if len(groupedFiles) > 1:
+        optionsString = ''
+        for i, (compAndFtype, files) in enumerate(groupedFiles.items()):
+            optionsString += f'{i} Files of the form {compAndFtype}, like {files[0]}\n'
+        strInput = timedInput(f'Multiple files containing relevant files found. They are:\n{optionsString}Please enter a number between 0 and {len(groupedFiles) - 1} to determine which option is used. If no input is received in 30 seconds, "0" will be chosen.', default='0', timeout=30)
+        keyInd = int(strInput)
+
+        chosenKey = list(groupedFiles.keys())[keyInd]
+    else:
+        chosenKey = list(groupedFiles.keys())[0]
+
+    return groupedFiles[chosenKey]
 
 def getPaths(outputRoot:str, archive:bool = True, component:str = 'cam', fileType:str = 'h0', years:list[str]|None=None, months:list[str]|None=None, days:list[str]|None=None, seconds:list[str]|None=None) -> tuple[list[str], str]:
     """
@@ -529,7 +682,13 @@ def avg(varAveraged: str, dimsAveragedOver: list[str], cesmOutRoot:str, archive:
     """
     Combines avgOverTime() and avgOverDims() to allow for averaging over both time and other dimensions. Loses some of the customizability of the other functions (e.g. by requiring a range of years rather than allowing for a list), but this should make it simpler to use.
     """
+    import os
+    import re
+    from glob import glob
+    import netCDF4 as nc
+
     component, fileType = 1, 2 # TODO Use query to find component and fileType. Maybe use this in avgOverDims too? Could use something like timedInput from IATEM data management to resolve having multiple hits (as in, same variable recorded in cam.h0 and cam.h1 files or in cam.h0 and clm2.h0)
+
     averagedFile = avgOverTime(cesmOutRoot, archive, [varAveraged], component, fileType, years = list[range(yearRange[0], yearRange[1])])
 
     averagedData = avgOverDims(averagedFile, varAveraged, dimsAveragedOver, landWeight)
