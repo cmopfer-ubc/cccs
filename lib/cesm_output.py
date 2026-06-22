@@ -3,9 +3,6 @@ Created: Camden Opfer, March 2026
 
 A collection of scripts to do basic aggregation and analysis of CESM output
 """
-# TODO Make function that ensures y, m, d, s inputs are strings of the required length
-# TODO See task in avg()
-
 # Imports for typing
 from os import environ as _environ
 from numpy import ndarray as _ndarray
@@ -16,7 +13,27 @@ _latNames = ['lat', 'TLAT', 'ULAT', 'doma_lat', 'slat']
 
 def fileSpec(case:str|None=None, component:str|None = None, ftype:str|None = None, years:list[str]|None=None, months:list[str]|None=None, days:list[str]|None=None, seconds:list[str]|None=None) -> tuple[str]:
     """
-    TODO
+    Creates a list of regular expression corresponding to CESM output filenames meeting the specified constraints. When input arguments are None, uses wildcards to allow for any value.
+
+    For information on CESM output file naming conventions, see https://docs.cesm.ucar.edu/models/cesm2/config/old/filename_conventions_cesm.html#www2.
+
+    :param case: The $CASE variable used by CESM, which is the first segment of the file name.
+    :type case: str or None, optional
+    :param component: The name of the component model whose output should be taken, e.g. cam or clm2.
+    :type component: str or None, optional
+    :param ftype: The abbreviation for the type of output file, either i for instantaneous data or in the range h0-h9 for history data.
+    :type ftype: str or None, optional
+    :param years: The years of data allowed. Must be a list of four-digit strings like ["0001"] or ["0203","0204"].
+    :type : list[str] or None, optional
+    :param months: The months of data allowed. Must be a list of two-digit strings like ["01"] or ["02","03","04"].
+    :type months: list[str] or None, optional
+    :param days: The days of data allowed. Must be a list of two-digit strings like ["01"] or ["10","15","20"].
+    :type days: list[str] or None, optional
+    :param seconds: The seconds of data allowed. Must be a list of five-digit strings like ["00000"] or ["0","21600","43200"].
+    :type seconds: list[str] or None, optional
+
+    :return: A list of regular expressions representing file specifications that match the provided requirements.
+    :rtype: list[str]
     """
     from itertools import product
 
@@ -62,7 +79,7 @@ def fileSpec(case:str|None=None, component:str|None = None, ftype:str|None = Non
     dayOpts = len(years) * len(months) * len(days)
     secondOpts = len(years) * len(months) * len(days) * len(seconds)
 
-    times = [''] * (monthOpts + dayOpts + secondOpts)
+    times = [''] * (monthOpts + dayOpts + secondOpts) # TODO Adapt to whatever the highest specified precision? E.g., only allow y-m file types if months, but not days/seconds, is specified?
     i = 0
     for y, m, d, s in product(years, months, days, seconds):
         for y in years:
@@ -88,9 +105,17 @@ def fileSpec(case:str|None=None, component:str|None = None, ftype:str|None = Non
 
     return fileSpecs
 
-def pathSpec(outputPath:str, archive:bool = True, **kwargs):
+def pathSpec(outputPath:str, archive:bool = True, **kwargs) -> list[str]:
     """
-    TODO
+    Feeds kwargs to fileSpec() to get basenames for relevant files, and makes them into full paths by appending them to outputPath or outputPath/component/hist.
+
+    :param outputPath: The $DOUT_S_ROOT (for archives) or other directory containing the data to search through. When not an archive directory, this should immediately contain all data. That is, running "ls outputPath" in terminal should show all the files you care about.
+    :type outputPath: str
+    :param archive: Whether or not this is an archive directory. Defualt is True, in which case the file structure is assumed to be outputPath/<component>/hist/<file name>.nc
+    :type archive: bool, optional
+
+    :return: A list of regular expressions representing paths to files that match the provided requirements.
+    :rtype: list[str]
     """
     import os
     from glob import glob
@@ -119,45 +144,23 @@ def pathSpec(outputPath:str, archive:bool = True, **kwargs):
 
     return allFiles
 
-def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, returnPath:str|None = None, **kwargs):
+def query(outputPath:str, searchTerm:str|None = None, **kwargs):
     """
-    Identifies the different types of netCDF files (e.g. <run-name>.cam.h1.<time>.nc or <run-name>.clm2.h0.<time>.nc) within the output path, searching through <component>/hist subdirectories if this is the path to an archive directory. If a search term is provided, will return a list of files/variables containing that term (if any exist). If return path is specified, the output of this function is saved to a text file.
+    Identifies the different types of netCDF files (e.g. <run-name>.cam.h1.<time>.nc or <run-name>.clm2.h0.<time>.nc) within the output path, searching through <component>/hist subdirectories if this is the path to an archive directory. If a search term is provided, will return a list of files/variables containing that term (if any exist).
 
-    Keyword arguments are passed to fileSpec(), and are used to determine what subset of output files are allowable (e.g. which component they must come from, or whether they are "*.h1.*" history files). See fileSpec() for more details.
+    Keyword arguments are passed to pathSpec(), which then passes all but archive to fileSpec(). These are used to determine what subset of output files are allowable (e.g. which component they must come from, or whether they are "*.h1.*" history files). See the doc-strings of pathSpec() and fileSpec() for more details.
 
     :param outputPath: The root directory for the CESM run's output.
     :type outputPath: str
-    :param archive: Whether this is an archive directory (query will search for outputPath/<component>/hist/*.nc files) or not (query will search for outputPath/*.nc files)
-    :type archive: bool, optional
     :param searchTerm: A string (can be a regex string) which the variable names and descriptions of all relevant output files will be searched for. Default is None, so all files/variables are returned. Still helpful because they are neatly organized.
     :type searchTerm: str or None, optional
-    :param returnPath: Path to a text file to which the output of this function will be written. Default is None, in which case cccs.utils.log will either print or log the output.
-    :type returnPath: str or None, optional
     """
     import os
     import re
     import netCDF4 as nc
     from .utils import log
 
-    def queryOutput(output, returnFile = returnPath):
-        """
-        Either logs the output of query() or saves it to the specified path.
-        """
-        if returnFile is None:
-            log(output)
-        else:
-            try:
-                returnDir = os.path.dirname(returnFile)
-                if returnDir: # Meaning return dir is not ''
-                    os.makedirs(returnDir, exist_ok=True)
-
-                with open(returnFile, 'a', encoding='UTF-8') as f:
-                    f.write('\n' + output)
-            except Exception as e:
-                log(f'Saving queryOutput to file had error: {e}\nWill log output instead.')
-                log(output)
-
-    allFiles = pathSpec(outputPath, archive, **kwargs)
+    allFiles = pathSpec(outputPath, **kwargs)
 
     # Find files with unique forms. E.g. <run-name>.cam.h0.stuff and <run-name>.cam.h1.things are different kinds of file, but not <run-name>.cam.h0.stuff and <run-name>.cam.h0.blah
     fileTypes = {}
@@ -169,7 +172,7 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, retur
         except KeyError:
             fileTypes[compAndFtype] = [file]
 
-    queryOutput(f'Found {len(fileTypes)} distinct file types.')
+    log(f'Found {len(fileTypes)} distinct file types.')
 
     if searchTerm:
         hits = []
@@ -183,14 +186,14 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, retur
                     hits.append([files, varName, varDescription])
 
         if hits:
-            queryOutput(f'Found {len(hits)} types of files satisfying the search term. They are...')
+            log(f'Found {len(hits)} types of files satisfying the search term. They are...')
             for hit in hits:
                 reportedFiles = hit[0]
                 if len(reportedFiles) > 5:
                     reportedFiles = reportedFiles[:3] + ['...'] + [reportedFiles[-1]]
-                queryOutput(f'\n\tFiles:\n{reportedFiles}\n\tVariable name: {hit[1]}\n\tVariable details:\n{hit[2]}')
+                log(f'\n\tFiles:\n{reportedFiles}\n\tVariable name: {hit[1]}\n\tVariable details:\n{hit[2]}')
         else:
-            queryOutput(f'No output files matching search term {searchTerm} found in {outputPath}.')
+            log(f'No output files matching search term {searchTerm} found in {outputPath}.')
 
     else:
         for files in fileTypes.values():
@@ -202,22 +205,20 @@ def query(outputPath:str, archive:bool = True, searchTerm:str|None = None, retur
             else:
                 reportedFiles = files
 
-            queryOutput(f'\nThe files:\n{reportedFiles}\nContain the variables:\n{varsDict}\n')
+            log(f'\nThe files:\n{reportedFiles}\nContain the variables:\n{varsDict}\n')
 
-def varQuery(varToContain:str, outputPath:str, archive:bool = True, **kwargs) -> list[str]:
+def varQuery(outputPath:str, varToContain:str, **kwargs) -> list[str]:
     """
-    TODO Write this
+    Returns a list of paths which all come from the same component (e.g. all cam or all clm2 output) and are of the same type (e.g. all insantaneous/i, all h0/history files, or all h1/history files). When several such groups of output exist within outputPath which match the constraints provided as kwargs, asks the user for input, selecting the first alphabetical option if there is no user input within 30 seconds.
 
-    Keyword arguments are passed to fileSpec(), and are used to determine what subset of output files are allowable (e.g. which component they must come from, or whether they are "*.h1.*" history files). See fileSpec() for more details.
+    Keyword arguments are passed to pathSpec(), which then passes all but archive to fileSpec(). These are used to determine what subset of output files are allowable (e.g. which component they must come from, or whether they are "*.h1.*" history files). See the doc-strings of pathSpec() and fileSpec() for more details.
 
     :param varToContain: The variable which the returned file(s) will contain. Must match exactly (including case-sensitivity) with the netCDF file's name.
     :type varToContain: str
     :param outputPath: The root directory for the CESM run's output.
     :type outputPath: str
-    :param archive: Whether this is an archive directory (query will search for outputPath/<component>/hist/*.nc files) or not (query will search for outputPath/*.nc files)
-    :type archive: bool, optional
 
-    :return: List of paths matching the specifications, and containing the variable varToContain.
+    :return: List of paths matching the specifications from kwargs, and containing the variable varToContain.
     :rtype: list[str]
     """
     import os
@@ -225,7 +226,7 @@ def varQuery(varToContain:str, outputPath:str, archive:bool = True, **kwargs) ->
     import netCDF4 as nc
     from .utils import log, timedInput
 
-    allFiles = pathSpec(outputPath, archive, **kwargs)
+    allFiles = pathSpec(outputPath, **kwargs)
 
     # Find files with unique forms. E.g. <run-name>.cam.h0.stuff and <run-name>.cam.h1.things are different kinds of file, but not <run-name>.cam.h0.stuff and <run-name>.cam.h0.blah
     fileTypes = {}
@@ -316,38 +317,38 @@ def getPaths(outputRoot:str, archive:bool = True, component:str = 'cam', fileTyp
 
     if os.path.exists(f'{partialFile}{years[0]}.nc'):
         frequencyPrecision = 'year'
-        fileSpecs = [partialFile] * len(years)
+        fSpecs = [partialFile] * len(years)
         for i, y in enumerate(years):
-            fileSpecs[i] += f'{y}.nc'
+            fSpecs[i] += f'{y}.nc'
 
     elif os.path.exists(f'{partialFile}{years[0]}-{months[0]}.nc'):
         frequencyPrecision = 'month'
-        fileSpecs = [partialFile] * (len(years) * len(months))
+        fSpecs = [partialFile] * (len(years) * len(months))
         for i, (y, m) in enumerate(product(years, months)):
-            fileSpecs[i] += f'{y}-{m}.nc'
+            fSpecs[i] += f'{y}-{m}.nc'
 
     elif os.path.exists(f'{partialFile}{years[0]}-{months[0]}-{days[0]}.nc'):
         frequencyPrecision = 'day'
-        fileSpecs = [partialFile] * (len(years) * len(months) * len(days))
+        fSpecs = [partialFile] * (len(years) * len(months) * len(days))
         for i, (y, m, d) in enumerate(product(years, months, days)):
-            fileSpecs[i] += f'{y}-{m}-{d}.nc'
+            fSpecs[i] += f'{y}-{m}-{d}.nc'
 
     elif os.path.exists(f'{partialFile}{years[0]}-{months[0]}-{days[0]}.nc'):
         frequencyPrecision = 'second'
-        fileSpecs = [partialFile] * (len(years) * len(months) * len(days) * len(seconds))
+        fSpecs = [partialFile] * (len(years) * len(months) * len(days) * len(seconds))
         for i, (y, m, d, s) in enumerate(product(years, months, days, seconds)):
-            fileSpecs[i] += f'{y}-{m}-{d}-{s}.nc'
+            fSpecs[i] += f'{y}-{m}-{d}-{s}.nc'
 
     else:
         raise FileNotFoundError(f'Unable to find file starting with {partialFile} with an ending matching time parameters years={years}, months={months}, days={days}, and seconds={seconds}.')
 
     validFiles = [] # Can't pre-allocate in case regex wildcards lead to multiple hits
     missingFiles = []
-    for fileSpec in fileSpecs:
-        if os.path.exists(fileSpec):
-            validFiles += fileSpec
+    for fSpec in fSpecs:
+        if os.path.exists(fSpec):
+            validFiles += fSpec
         else:
-            missingFiles += fileSpec
+            missingFiles += fSpec
     if missingFiles:
         warnings.warn(f'Expected to find files {missingFiles}, but they do not exist.', UserWarning)
 
@@ -682,11 +683,6 @@ def avg(varAveraged: str, dimsAveragedOver: list[str], cesmOutRoot:str, archive:
     """
     Combines avgOverTime() and avgOverDims() to allow for averaging over both time and other dimensions. Loses some of the customizability of the other functions (e.g. by requiring a range of years rather than allowing for a list), but this should make it simpler to use.
     """
-    import os
-    import re
-    from glob import glob
-    import netCDF4 as nc
-
     component, fileType = 1, 2 # TODO Use query to find component and fileType. Maybe use this in avgOverDims too? Could use something like timedInput from IATEM data management to resolve having multiple hits (as in, same variable recorded in cam.h0 and cam.h1 files or in cam.h0 and clm2.h0)
 
     averagedFile = avgOverTime(cesmOutRoot, archive, [varAveraged], component, fileType, years = list[range(yearRange[0], yearRange[1])])
